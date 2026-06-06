@@ -1,173 +1,288 @@
-# PRD Visualizer  · v0.2.0-alpha
+# prdone · PRD lifecycle tooling
 
-A read-only VSCode extension that renders the canonical [`prd`](https://github.com/gyasis/prd) lifecycle CLI as three surfaces:
+[![visibility](https://img.shields.io/badge/repo-public-blue)](https://github.com/gyasis/prdone)
+![version](https://img.shields.io/badge/version-0.2.0--alpha-orange)
+![cli](https://img.shields.io/badge/CLI-bash%2C%20zero%20deps-success)
+![vscode](https://img.shields.io/badge/VSCode-%E2%89%A51.85-purple)
 
-- **Sidebar tile grid** in the editor — inherits VSCode's theme via `--vscode-*` CSS variables (Default Dark / Light+ / High Contrast), morphs as you switch.
-- **Browser kanban** on `127.0.0.1:7373+` — wide-screen "wow" surface with three tier columns (scratch / archive / library), Geist + cream/ink editorial palette.
-- **Browser gallery** on `127.0.0.1:7373+/gallery` (Spec 002, v0.2.0+) — CSS-grid preview of every PRD with an HTML companion. Lazy-loaded iframes, capped at 20 concurrent, sandboxed.
+**`prdone`** is a clone-and-install bundle for the `prd` **PRD lifecycle CLI** and its
+**Claude Code skills**, plus an optional **VSCode "PRD Visualizer"** extension that renders
+your PRDs as a sidebar grid + browser kanban.
 
-Click a tile → side panel with copy-pasteable Claude Code slash commands. **Phase 1 is read-only**: the extension never invokes state-mutating `prd` subcommands; you copy commands and run them yourself.
+> A **PRD** here is a lightweight, file-based "plan record" — a markdown doc with frontmatter
+> that persists a multi-step plan across sessions. The `prd` CLI manages them across three
+> tiers: **`scratch`** (active work), **`archive`** (resolved), **`library`** (graduated /
+> reusable). The skills let Claude Code create, resume, log, and summarize them.
 
-### Spec 002 — HTML companion PRDs (v0.2.0)
-
-Each PRD's `.md` index can pair with a same-base-name `.html` design companion produced by the `/design-prd` skill in Claude Code.
-
-```bash
-prd new --html auth_flow_refactor          # creates BOTH auth_flow_refactor_<date>.{md,html}
-prd open --html auth_flow_refactor         # opens HTML companion in VSCode WebviewPanel
-prd doctor                                  # flags any orphan .html files (no .md sibling)
-```
-
-Tiles in both surfaces show a footer icon row: `📄 MD` (always) + `🌐 HTML` (when paired). Click `🌐` to open the companion in a sandboxed webview with an "↗ Open in Browser" button for full-fidelity rendering. The gallery view (`/gallery`) shows scaled-down iframe previews of every HTML companion in a CSS grid.
-
-Why two surfaces? Running `prd summary` in a 24-line terminal scrolls past everything at ~85 PRDs. The sidebar gives you a quick scan during editing; the kanban gives you the full board on a second monitor.
-
-> **🚧 Alpha**: 4 of 7 acceptance scenarios pass on the F5 host (US1 grid + filters, US1 theme cycling, US2 copy-commands, US3 browser kanban). Live save-sync (US4), Workspace Trust (US5b), and Doctor View (US5a) remain to be walked. Use only on a single-user single-machine setup. Not on the marketplace; install from the bundled .vsix.
+The whole point of this repo: **clone it on any machine, run one script, and you have the
+CLI + skills installed and working** — no build step, no dependencies.
 
 ---
 
-## Quickstart (Recommended) — install the bundled .vsix
+## Table of contents
 
-If you just want to *use* the extension:
+- [Quick install](#quick-install-the-whole-job)
+- [What gets installed](#what-gets-installed)
+- [Using the `prd` CLI](#using-the-prd-cli)
+- [The Claude Code skills](#the-claude-code-skills)
+- [For AI agents](#for-ai-agents)
+- [The VSCode extension (optional)](#the-vscode-extension-optional)
+- [Repo layout](#repo-layout)
+- [Development](#development)
+- [Packaging the .vsix](#packaging-the-vsix)
+- [Uninstall](#uninstall)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
+
+---
+
+## Quick install (the whole job)
 
 ```bash
-# 1. Clone + go in
-git clone <repo-url> ~/dev/projects/prdone
-cd ~/dev/projects/prdone
-
-# 2. Install dependencies (one-time, ~30s)
-npm install
-
-# 3. Build + package the .vsix
-npm run build
-npm run package
-# → produces dist/prdone-0.2.0-alpha.vsix
-
-# 4. Install into VSCode
-code --install-extension dist/prdone-0.2.0-alpha.vsix
+git clone https://github.com/gyasis/prdone.git
+cd prdone
+./install.sh
 ```
 
-Restart VSCode. A **PRDs** icon appears in the activity bar (left strip). Click it.
+That's it — the CLI **and** all skills are installed. `install.sh` is **self-contained**
+(only `bash` + coreutils — no `npm`, no network, no build), **idempotent**, and
+**non-interactive** (safe to run unattended, including by an AI agent). Existing files are
+backed up to `<name>.bak` before overwrite.
 
-If the sidebar shows a "Doctor View" instead of the tile grid, your shell PATH isn't reaching the `prd` binary — open VSCode settings, search `prd.binaryPath`, set it to an absolute path (e.g. `/home/you/bin/prd`), then click "Retry connection" in the Doctor View.
+```bash
+./install.sh --dry-run      # preview every action, change nothing   ← run this first
+./install.sh --skills-only  # install skills, skip the CLI
+./install.sh --cli-only     # install the CLI, skip skills
+./install.sh --help
+```
 
-## Install the `prd` skill set + CLI on a fresh machine
+Then verify:
 
-The .vsix bundles the canonical [`prd` CLI binary](bundle/bin/prd) and the [`prd*` skill set](bundle/skills) (the markdown skills Claude Code reads). After installing the .vsix:
+```bash
+prd --help                  # exit 0 == CLI installed
+ls ~/.claude/skills/prd/SKILL.md   # skills present (dir-form)
+```
 
-1. Open the Command Palette (`Ctrl+Shift+P`)
-2. Run **`PRD: Install Skills + CLI Into Home`**
-3. Confirm the prompt — the command will:
-   - Copy `bundle/skills/prd*.md` → `~/.claude/skills/`
-   - Copy `bundle/bin/prd` → `~/bin/prd` (chmod +x)
-   - Back up any existing files to `<name>.bak` before overwrite
+If the installer warns that `~/bin` isn't on your `PATH`, add this to your shell rc
+(`~/.bashrc` / `~/.zshrc`) and restart your shell:
 
-That's it. From a fresh Claude Code install, you go from no PRD tooling to a working `prd` CLI + Claude-Code-aware skill set in one click. No shell scripts, no manual symlinks.
-
-If `~/bin` is not on your PATH, add this to your shell rc:
 ```bash
 export PATH="$HOME/bin:$PATH"
 ```
 
-## Quickstart (Developer) — F5 dev session
+Restart Claude Code afterward so it loads the newly installed `/prd*` skills.
 
-If you want to hack on the extension itself:
+---
+
+## What gets installed
+
+| Source (in this repo)            | Destination                              | Notes |
+|----------------------------------|------------------------------------------|-------|
+| `bundle/bin/prd`                 | `~/bin/prd` (`chmod 755`)                | the CLI — a self-contained bash script |
+| `bundle/skills/<name>/SKILL.md`  | `~/.claude/skills/<name>/SKILL.md`       | **dir-form** — the only form Claude Code's loader reads |
+
+The installer also **retires stale flat skill shadows**: if a legacy
+`~/.claude/skills/<name>.md` (flat file) exists, it's renamed to `.bak`. Claude Code only
+loads `~/.claude/skills/<name>/SKILL.md` — flat `.md` files are silently ignored, which is a
+classic footgun this installer guards against.
+
+Skills shipped: **`prd`**, **`prd-checkout`**, **`prd-diary`**, **`prd-summary`**,
+**`prd-README`**.
+
+---
+
+## Using the `prd` CLI
 
 ```bash
-git clone <repo-url> ~/dev/projects/prdone
-cd ~/dev/projects/prdone
-npm install
-npm run build
-code .   # opens this repo in VSCode
+prd --help                       # full subcommand reference
+prd new <descriptor>             # create a scratch PRD
+prd new --parent <slug> <desc>   # create a child PRD under a parent
+prd list                         # active PRDs (current branch/repo aware)
+prd summary                      # librarian "card catalog" view across all tiers
+prd log <slug> note "..."        # append a timestamped note
+prd log <slug> decision "..."    # append a decision to the Decisions Log
+prd log <slug> subagent <name>="<purpose>"
+prd resolve <slug>               # mark a scratch PRD resolved -> archive
+prd graduate <slug>              # promote a PRD into the reusable library tier
+prd reopen <slug>                # reopen a resolved/archived PRD
+prd sweep                        # surface stale PRDs needing attention
+prd doctor                       # integrity checks (orphans, schema drift, etc.)
 ```
 
-In VSCode, press **F5** (or Run → "Run Extension"). A second window labelled `[Extension Development Host]` opens with the live source loaded. Edit, rebuild (`npm run build` or `npm run watch`), `Ctrl+R` in the host window to reload.
+PRDs follow a **three-tier model** — `scratch/` (active), `archive/` (resolved),
+`library/` (graduated). The CLI is branch/repo-aware so `prd list` surfaces the work
+relevant to where you are. Full behavioral contract: `~/.claude/skills/prd/SKILL.md`
+(installed) or [`bundle/skills/prd/SKILL.md`](bundle/skills/prd/SKILL.md) (in this repo).
 
-## Prerequisites
+---
 
-- VSCode **1.85+**
-- Node **20+** (for build)
-- The [`prd`](https://github.com/gyasis/prd) CLI installed and on PATH, OR set `prd.binaryPath` in VSCode settings to its absolute path. (VSCode launched from a GUI doesn't always inherit your shell PATH — see Doctor View below.)
-- `~/dev/prd/` populated with at least one PRD (or `prd new ...` to create one).
-- Internet access at first webview load (Geist & Geist Mono fonts come from Google Fonts; CSP allows `fonts.googleapis.com` + `fonts.gstatic.com` only).
+## The Claude Code skills
 
-## Usage
+Once installed, these appear as `/prd*` slash commands / Skill-tool entries in Claude Code:
+
+| Skill | Purpose |
+|---|---|
+| **`/prd`** | Master PRD lifecycle skill — create, list, log, resolve, graduate. Wraps the CLI. |
+| **`/prd-checkout`** | "Resume work" — pulls deep context for a PRD (open items, recent decisions, git log) so you can pick up where you left off. |
+| **`/prd-summary`** | Librarian inventory view — every PRD with status, age, ephemeral marker, significance, tags. Filters + sorts. |
+| **`/prd-diary`** | Per-session dev diary attached to a PRD — opens/closes per session, records done / discussed / escalations / next-pickup. |
+| **`prd-README`** | Reference doc skill describing the whole PRD system. |
+
+These are the source of truth for *how* the agent should drive the CLI; the binary is the
+*mechanism*. Keeping them paired (and versioned together in this repo) is the reason `prdone`
+exists as one bundle.
+
+---
+
+## For AI agents
+
+If you are an AI coding agent that just cloned this repo, read **[`AGENTS.md`](AGENTS.md)** —
+it's a purpose-written, step-by-step install + usage guide for autonomous operation
+(clone → `./install.sh` → verify → use), including dry-run discipline and uninstall.
+
+---
+
+## The VSCode extension (optional)
+
+`prdone` is also a **read-only VSCode extension** ("PRD Visualizer", v0.2.0-alpha) that
+renders the CLI's output as three surfaces. It is **not required** to use the CLI or skills.
+
+- **Sidebar tile grid** — in-editor, inherits VSCode's theme via `--vscode-*` CSS variables
+  (Dark / Light+ / High Contrast), morphs live as you switch themes.
+- **Browser kanban** — `http://127.0.0.1:7373+` (port walks 7373→7382), wide-screen board
+  with three tier columns (scratch / archive / library), editorial Geist + cream/ink palette.
+- **Browser gallery** — `…/gallery`, a CSS-grid preview of every PRD that has an HTML
+  companion (lazy-loaded sandboxed iframes, capped at 20 concurrent).
+
+Click a tile → side panel with copy-pasteable Claude Code commands (`/prd-checkout <id>`,
+`prd log <id> note`, `prd log <id> decision`, tier-aware `prd resolve` / `prd graduate`).
+**Phase 1 is strictly read-only** — the extension never invokes state-mutating `prd`
+subcommands; you copy commands and run them yourself. The `EXECUTE_CLI` action exists in the
+type system but is rejected at runtime (Phase 2 territory).
+
+### Install the extension
+
+```bash
+npm install
+npm run build          # esbuild -> dist/extension.js
+npm run package        # vsce -> dist/prdone-<version>.vsix (auto-named from package.json)
+code --install-extension dist/prdone-*.vsix
+```
+
+Restart VSCode — a **PRDs** icon appears in the activity bar. The extension also contributes
+a command **"PRD: Install Skills + CLI Into Home"** (`prd.installSkills`) that runs the same
+install as `install.sh`, from the bundled payload inside the `.vsix`.
+
+### Extension commands & settings
 
 | Command (palette) | What it does |
 |---|---|
-| **PRD: Open Visualizer** | Reveals the sidebar tile grid (or focuses if already open). |
-| **PRD: Open Kanban (Browser)** | Starts the bundled local Express server (port walks 7373→7382), opens your default browser at `http://127.0.0.1:<port>/`. |
-
-Click any tile → side panel with **Open file**, **`/prd-checkout <id>`**, **`prd log <id> note`**, **`prd log <id> decision`**, plus tier-specific **`prd resolve`** (scratch ACTIVE) or **`prd graduate`** (archive). Click any command — it copies to your clipboard with a 900ms green flash.
-
-### Settings
+| **PRD: Open Visualizer** | Reveals/focuses the sidebar tile grid. |
+| **PRD: Open Kanban (Browser)** | Starts the bundled local Express server, opens your browser at `127.0.0.1:<port>/`. |
+| **PRD: Refresh Visualizer** | Re-runs `prd summary --json`. Bindable to a shortcut. |
+| **PRD: Install Skills + CLI Into Home** | Installs the bundled CLI + skills (dir-form). |
 
 | Setting | Default | Description |
 |---|---|---|
-| `prd.binaryPath` | `"prd"` | Path to the `prd` CLI binary. Use absolute path when launching VSCode from a GUI. |
-| `prd.kanbanBasePort` | `7373` | Starting port for the bundled local kanban server. Walker increments by 1 up to 10 ports. |
+| `prd.binaryPath` | `"prd"` | Path to the `prd` CLI. Use an **absolute** path when launching VSCode from a GUI (GUI launches don't always inherit your shell PATH). |
+| `prd.kanbanBasePort` | `7373` | Starting port for the local kanban server (walks up to 10 ports). |
 
-### Doctor View
+If the CLI isn't reachable on activation, the sidebar shows a **Doctor View** (not a blank
+pane) with a one-click "Set binary path…", a "Retry connection" link, and the failed call's
+stderr for debugging.
 
-If the CLI isn't reachable on activation (binary missing, PATH not inherited, etc.), the sidebar shows a Doctor View instead of a blank pane:
+> **🚧 Alpha.** The extension is single-user / single-machine and not on the marketplace.
+> Install from the bundled `.vsix`. The CLI + skills (via `install.sh`) are the stable,
+> primary deliverable; the visualizer is a convenience layer on top.
 
-- One-click **"Set binary path…"** → opens VSCode settings filtered to `prd.binaryPath`.
-- **"Retry connection"** link → re-runs the CLI without an editor restart.
-- The full stderr from the failed call is printed below for debugging.
+---
 
-## Verifying it works (the v0.1 acceptance gate)
-
-The seven scenarios below come from [`specs/001-prd-visualizer/quickstart.md`](specs/001-prd-visualizer/quickstart.md). All seven must pass before tagging `v0.1.0`. Each is bounded to 5 minutes — total budget 35 minutes.
-
-1. **Activation & Doctor View** — Unset `prd.binaryPath`, remove `prd` from PATH. Reload window. Doctor View appears ≤1.5s.
-2. **Theme fidelity** — Cycle Dark Modern → Light+ → Light High Contrast. Tiles stay legible without restart.
-3. **Live sync** — Edit a PRD `.md` in another editor tab, save. Tile updates ≤300ms.
-4. **Tile grid scans cleanly** — At ≥85 PRDs, grid renders ≤500ms after CLI returns. "Stale only" filter narrows correctly. Empty filter result shows a hint.
-5. **Kanban view** — Run "PRD: Open Kanban". Three columns, correct counts, read-only.
-6. **Action contract** — Click any tile; side-panel shows ≥4 commands. Click `/prd-checkout`; verify clipboard via `xclip -selection clipboard -o` (Linux) / `pbpaste` (macOS).
-7. **Workspace Trust** — Open in an untrusted folder. Read-only render works; CLI invocation gated until trust is granted.
-
-Manual runbook: [`tests/manual/acceptance.md`](tests/manual/acceptance.md).
-
-## Architecture
+## Repo layout
 
 ```
-src/                           extension host (Node)
-├── extension.ts               activate / deactivate, command registration
-├── types.ts                   Prd, Tier, Status, WebviewAction, …
-├── guards.ts                  isPrd / isWebviewAction / isExtensionResponse / isKanbanApiPayload
-├── data/prdSource.ts          spawn `prd summary --json`, validate, return Prd[]
-├── webview/
-│   ├── sidebarProvider.ts     WebviewViewProvider — sidebar entry
-│   └── doctorView.ts          rendered when prdSource fails
-├── kanban/server.ts           Express on 127.0.0.1, 405 on POST/PUT/DELETE
-├── actions/
-│   ├── messageHandler.ts      validates webview→extension actions
-│   └── commandTemplates.ts    pure: Prd → ActionCommand[] (tier-aware)
-└── lib/findFreePort.ts        port walker
-webview-frontend/              shared frontend bundle (sidebar + kanban)
-├── index.ts                   entry; mode chosen by __PRD_RENDER_MODE__
-├── tileGrid.ts                renderTileGrid + empty-state
-├── sidePanel.ts               click-tile → slide-up detail panel
-├── filters.ts                 applyFilters (pure)
-├── kanbanBoard.ts             three-column kanban renderer
-├── styles.css                 sidebar styles (uses var(--vscode-*))
-└── browser-overrides.css      kanban-specific palette + fonts
-kanban-static/kanban.html      shell served by Express
-specs/001-prd-visualizer/      spec, plan, contracts, design templates
-└── design/                    canonical visual references (port, don't redesign)
+prdone/
+├── install.sh                 ← clone-and-install entry point (CLI + skills)
+├── AGENTS.md                  ← agent-facing install + usage guide
+├── bundle/                    ← the installable payload (shipped in the .vsix too)
+│   ├── bin/prd                  the prd CLI (bash, self-contained)
+│   └── skills/<name>/SKILL.md   dir-form Claude Code skills
+├── src/                       ← VSCode extension host (TypeScript)
+│   ├── extension.ts             activate/deactivate, command registration, installSkills
+│   ├── webview/                 sidebar provider + Doctor View
+│   ├── kanban/server.ts         read-only Express server (405 on writes)
+│   ├── actions/                 webview↔extension action validation + command templates
+│   └── data/prdSource.ts        spawn `prd summary --json`, validate
+├── webview-frontend/          ← shared frontend (sidebar grid + kanban board)
+├── kanban-static/             ← HTML shell served by Express
+├── specs/                     ← spec-kit specs/plans/tasks/design refs
+├── dist/                      ← build output + .vsix (gitignored)
+└── package.json               ← extension manifest + scripts
 ```
 
-Every cross-process boundary (CLI ↔ extension, extension ↔ webview, server ↔ browser) is type-guarded. Phase 1 surface is strictly read-only — `EXECUTE_CLI` action is reserved in the type but rejected at runtime (Phase 2 territory).
+Every cross-process boundary (CLI ↔ extension, extension ↔ webview, server ↔ browser) is
+type-guarded.
 
-## Spec & governance
+---
 
-- [Constitution](.specify/memory/constitution.md) — 5 principles binding this codebase
-- [Spec](specs/001-prd-visualizer/spec.md) — 5 user stories, 19 functional requirements, 8 success criteria
-- [Plan](specs/001-prd-visualizer/plan.md) — tech context + design references
-- [Tasks](specs/001-prd-visualizer/tasks.md) — 65-task implementation track
-- [Design templates](specs/001-prd-visualizer/design/) — `kanban.html` + `sidebar.html` produced via Open Design
+## Development
+
+```bash
+npm install
+npm run build       # esbuild bundles src/ + webview-frontend/ -> dist/
+npm run watch       # rebuild on change
+npm test            # vitest unit tests
+```
+
+**F5 dev session:** open the repo in VSCode and press **F5** (Run → "Run Extension"). A second
+`[Extension Development Host]` window loads the live source. Edit → `npm run build` (or
+`watch`) → `Ctrl+R` in the host window to reload.
+
+Prerequisites for extension dev: **VSCode 1.85+**, **Node 20+**. The CLI itself needs nothing
+but `bash`.
+
+---
+
+## Packaging the .vsix
+
+```bash
+npm run package     # vsce package -o dist/  → dist/prdone-<version>.vsix
+```
+
+The `.vsix` **includes `bundle/`** (the CLI + skills) so the in-editor "Install Skills + CLI"
+command works from a packaged install. Do **not** add `bundle/**` back to `.vscodeignore` — that
+would ship a `.vsix` whose installer can't find its payload. The package filename is
+auto-derived from `package.json` `version`.
+
+---
+
+## Uninstall
+
+```bash
+rm -f ~/bin/prd
+rm -rf ~/.claude/skills/prd ~/.claude/skills/prd-checkout \
+       ~/.claude/skills/prd-diary ~/.claude/skills/prd-summary \
+       ~/.claude/skills/prd-README
+# the installer's backups, if you want to restore them:
+#   ~/bin/prd.bak , ~/.claude/skills/<name>/SKILL.md.bak
+```
+
+Uninstall the VSCode extension via the Extensions panel, or
+`code --uninstall-extension gyasis.prdone`.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `prd: command not found` after install | `~/bin` isn't on `PATH` — add `export PATH="$HOME/bin:$PATH"` to your shell rc. |
+| `/prd` skills don't appear in Claude Code | Restart Claude Code — skills load at session start. Confirm they're at `~/.claude/skills/<name>/SKILL.md` (dir-form), not flat `.md`. |
+| Extension shows "Doctor View" | The CLI isn't reachable. Set `prd.binaryPath` to an absolute path (e.g. `/home/you/bin/prd`) and click "Retry connection". |
+| `install.sh: bundle/ missing` | You're not in a full clone (or it's a partial checkout). Re-clone the repo. |
+| Kanban port in use | The server walks 7373→7382; if all are taken, free one or change `prd.kanbanBasePort`. |
+
+---
 
 ## License
 
-UNLICENSED — single-developer personal tool. No marketplace publication planned.
+UNLICENSED — single-developer personal tooling. Use at your own discretion.
