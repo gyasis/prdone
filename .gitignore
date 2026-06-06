@@ -1,0 +1,39 @@
+node_modules/
+dist/
+*.vsix
+.vscode-test/
+coverage/
+.DS_Store
+*.log
+
+# dev-kid runtime state (regenerated each session)
+.claude/activity_stream.md
+.claude/system_bus.json
+.claude/AGENT_STATE.json
+.claude/task_timers.json
+.claude/session_snapshots/
+
+# Agent-state / transcript leak surfaces — NEVER ship to a public remote.
+# (.specstory stores full chat transcripts incl. any pasted secret.)
+.specstory/
+.memory/
+.aider*
+.continue/
+.cursor/
+.windsurf/
+.history/
+.cache/
+deep_research.db
+.claude/process_registry.*
+.claude/settings.local.json
+.claude/AGENT_STATE*.json
+.claude/active_stack.md
+
+# Env / secret files
+.env
+.env.*
+*.pem
+*.key
+*.token
+secrets/
+credentials/

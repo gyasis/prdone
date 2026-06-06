@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PRD Network Graph — design variants</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,wght@0,400;0,600;1,400&family=Geist+Mono:wght@400;500;600&family=Caveat:wght@500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --paper: #fafaf7;
+    --rule: #e6e3dc;
+    --muted: #6b6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: #f3f1ec;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header.page {
+    max-width: 1320px;
+    margin: 32px auto 16px;
+    padding: 0 24px;
+  }
+  header.page h1 {
+    font-family: "Newsreader", Georgia, serif;
+    font-weight: 600;
+    font-size: 32px;
+    letter-spacing: -0.01em;
+    margin: 0 0 8px;
+  }
+  header.page p {
+    color: var(--muted);
+    max-width: 720px;
+    margin: 0;
+  }
+  header.page code {
+    font-family: "Geist Mono", ui-monospace, Menlo, monospace;
+    background: #ece9e2;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12.5px;
+  }
+  .grid {
+    max-width: 1320px;
+    margin: 24px auto;
+    padding: 0 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .panel {
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel .panel-head {
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .panel h2 {
+    margin: 0 0 4px;
+    font-family: "Newsreader", Georgia, serif;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: -0.005em;
+  }
+  .panel .desc {
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .panel .stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    min-height: 320px;
+  }
+
+  /* ---------- Variant 1: Editorial mermaid ---------- */
+  .v1-stage { background: #fafaf7; }
+  .v1 .edge { stroke: #1a1a1a; stroke-width: 1; fill: none; }
+  .v1 .box {
+    fill: #fafaf7;
+    stroke: #1a1a1a;
+    stroke-width: 1;
+  }
+  .v1 .box.self {
+    stroke-width: 1.5;
+    fill: #fff;
+  }
+  .v1 .accent { fill: #b03a2e; }
+  .v1 text {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 11.5px;
+    fill: #1a1a1a;
+  }
+  .v1 .slug {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 9.5px;
+    fill: #6b6b6b;
+  }
+  .v1 .self-title { font-weight: 600; }
+  .v1 .box:hover { fill: #f0eee6; cursor: pointer; }
+
+  /* ---------- Variant 2: Dense IDE ---------- */
+  .v2-stage { background: #1e1e22; }
+  .v2 .edge { stroke: #6c6c78; stroke-width: 1.5; fill: none; }
+  .v2 .edge.self-edge { stroke: #4ec9d6; }
+  .v2 .box {
+    stroke-width: 1.25;
+  }
+  .v2 .box.parent { fill: #2a2336; stroke: #b48ad1; }
+  .v2 .box.sibling { fill: #2c3526; stroke: #8fbf7a; }
+  .v2 .box.self {
+    fill: #1a3a3f;
+    stroke: #4ec9d6;
+    stroke-width: 2;
+  }
+  .v2 .box.child { fill: #3a2e22; stroke: #d99a5b; }
+  .v2 text {
+    font-family: "Geist Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    fill: #d4d4d4;
+  }
+  .v2 .slug { font-size: 9.5px; fill: #9c9c9c; }
+  .v2 .self-title { fill: #4ec9d6; font-weight: 600; }
+  .v2 .box:hover { filter: brightness(1.25); cursor: pointer; }
+
+  /* ---------- Variant 3: Hand-drawn marker ---------- */
+  .v3-stage { background: #f7f0e0; }
+  .v3 .edge {
+    stroke: #2b2b2b;
+    stroke-width: 1.6;
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    filter: url(#rough);
+  }
+  .v3 .box {
+    fill: #fffef6;
+    stroke: #2b2b2b;
+    stroke-width: 1.5;
+    filter: url(#rough);
+  }
+  .v3 .box.self {
+    fill: #fff4c2;
+    stroke-width: 2.2;
+  }
+  .v3 text {
+    font-family: "Caveat", "Comic Sans MS", cursive;
+    font-size: 16px;
+    fill: #2b2b2b;
+  }
+  .v3 .slug { font-size: 11px; fill: #6b6b6b; font-family: "Caveat", cursive; }
+  .v3 .self-title { font-weight: 700; }
+  .v3 .box:hover { fill: #f4ecd3; cursor: pointer; }
+
+  /* ---------- Variant 4: Kanban-card chunk ---------- */
+  .v4-stage { background: #f4f5f7; }
+  .v4 .edge {
+    stroke: #94a3b8;
+    stroke-width: 1.4;
+    fill: none;
+  }
+  .v4 .card {
+    fill: #ffffff;
+    stroke: #e2e8f0;
+    stroke-width: 1;
+    rx: 6;
+    ry: 6;
+    filter: url(#shadow);
+  }
+  .v4 .card.parent { stroke: #c4b5fd; }
+  .v4 .card.sibling { stroke: #cbd5e1; }
+  .v4 .card.self {
+    stroke: #06b6d4;
+    stroke-width: 1.75;
+    fill: #ecfeff;
+  }
+  .v4 .card.child { stroke: #cbd5e1; }
+  .v4 text {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    font-size: 11px;
+    fill: #0f172a;
+  }
+  .v4 .slug {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 9.5px;
+    fill: #64748b;
+  }
+  .v4 .glyph { font-size: 13px; }
+  .v4 .age { font-size: 9px; fill: #94a3b8; }
+  .v4 .self-title { font-weight: 600; fill: #0e7490; }
+  .v4 .card:hover { stroke-width: 2; cursor: pointer; }
+
+  /* footer */
+  footer.checklist {
+    max-width: 1320px;
+    margin: 24px auto 64px;
+    padding: 20px 28px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+  }
+  footer.checklist h3 {
+    margin: 0 0 12px;
+    font-family: "Newsreader", Georgia, serif;
+    font-weight: 600;
+    font-size: 16px;
+  }
+  footer.checklist ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 24px;
+  }
+  footer.checklist li {
+    font-size: 13px;
+    color: #333;
+    padding-left: 24px;
+    position: relative;
+  }
+  footer.checklist li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid #999;
+    border-radius: 2px;
+    background: #fff;
+  }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <h1>PRD Network Graph — design variants</h1>
+  <p>Four aesthetic treatments of the same 3-row mermaid hierarchy (parent → self+siblings → children) for the side-panel embedded graph in the PRD Visualizer VSCode extension. Pick one and reply with <code>v1</code>, <code>v2</code>, <code>v3</code>, or <code>v4</code>.</p>
+</header>
+
+<!-- Shared SVG defs (filters reused across panels) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.025" numOctaves="2" seed="3" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.2"/>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.2"/>
+      <feOffset dx="0" dy="1" result="off"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+</svg>
+
+<section class="grid">
+
+  <!-- =========== Variant 1 =========== -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Variant 1 — Editorial mermaid</h2>
+      <div class="desc">Thin 1px lines, generous whitespace, Newsreader serif titles, restrained neutrals with a single accent. Reads like a New Yorker explanatory diagram.</div>
+    </div>
+    <div class="stage v1-stage">
+      <svg class="v1" viewBox="0 0 600 320" width="100%" height="320" preserveAspectRatio="xMidYMid meet">
+        <!-- Edges first (under boxes) -->
+        <!-- Parent -> self (vertical down through middle) -->
+        <path class="edge" d="M 300 70 L 300 110 L 300 130" />
+        <!-- Parent -> left sibling -->
+        <path class="edge" d="M 300 70 L 300 100 L 110 100 L 110 145" />
+        <!-- Parent -> right sibling -->
+        <path class="edge" d="M 300 70 L 300 100 L 490 100 L 490 145" />
+        <!-- Self -> children: vertical drop + horizontal tee + 3 verticals -->
+        <path class="edge" d="M 300 200 L 300 230" />
+        <path class="edge" d="M 110 230 L 490 230" />
+        <path class="edge" d="M 110 230 L 110 260" />
+        <path class="edge" d="M 300 230 L 300 260" />
+        <path class="edge" d="M 490 230 L 490 260" />
+
+        <!-- Parent -->
+        <rect class="box" x="240" y="36" width="120" height="34" rx="2" />
+        <text x="300" y="51" text-anchor="middle">HCC validation</text>
+        <text class="slug" x="300" y="64" text-anchor="middle">hcc_validation_2026-04-27</text>
+
+        <!-- Sibling left -->
+        <rect class="box" x="50" y="145" width="120" height="34" rx="2" />
+        <text x="110" y="160" text-anchor="middle">HCC events chain</text>
+        <text class="slug" x="110" y="173" text-anchor="middle">hcc_events_chain_…</text>
+
+        <!-- Self (center) -->
+        <rect class="box self" x="232" y="136" width="136" height="44" rx="2" />
+        <circle class="accent" cx="244" cy="158" r="2.5" />
+        <text class="self-title" x="300" y="156" text-anchor="middle">★ HCC KPI strip rebind</text>
+        <text class="slug" x="300" y="171" text-anchor="middle">hcc_kpi_strip_rebind_…</text>
+
+        <!-- Sibling right -->
+        <rect class="box" x="430" y="145" width="120" height="34" rx="2" />
+        <text x="490" y="160" text-anchor="middle">Zeno categorization</text>
+        <text class="slug" x="490" y="173" text-anchor="middle">hcc_zeno_categoriz…</text>
+
+        <!-- Children -->
+        <rect class="box" x="60" y="260" width="100" height="30" rx="2" />
+        <text x="110" y="278" text-anchor="middle">Child A</text>
+        <rect class="box" x="250" y="260" width="100" height="30" rx="2" />
+        <text x="300" y="278" text-anchor="middle">Child B</text>
+        <rect class="box" x="440" y="260" width="100" height="30" rx="2" />
+        <text x="490" y="278" text-anchor="middle">Child C</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- =========== Variant 2 =========== -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Variant 2 — Dense IDE</h2>
+      <div class="desc">Geist Mono throughout, tight spacing, VSCode-charcoal background with neon role accents (cyan self, purple parent, green siblings, orange children). Tool-diagram density.</div>
+    </div>
+    <div class="stage v2-stage">
+      <svg class="v2" viewBox="0 0 600 320" width="100%" height="320" preserveAspectRatio="xMidYMid meet">
+        <!-- edges -->
+        <path class="edge self-edge" d="M 300 70 L 300 110 L 300 130" />
+        <path class="edge" d="M 300 70 L 300 100 L 110 100 L 110 145" />
+        <path class="edge" d="M 300 70 L 300 100 L 490 100 L 490 145" />
+        <path class="edge self-edge" d="M 300 200 L 300 230" />
+        <path class="edge self-edge" d="M 110 230 L 490 230" />
+        <path class="edge" d="M 110 230 L 110 260" />
+        <path class="edge" d="M 300 230 L 300 260" />
+        <path class="edge" d="M 490 230 L 490 260" />
+
+        <!-- parent -->
+        <rect class="box parent" x="232" y="36" width="136" height="34" rx="3" />
+        <text x="300" y="50" text-anchor="middle">HCC validation</text>
+        <text class="slug" x="300" y="63" text-anchor="middle">hcc_validation_2026-04-27</text>
+
+        <!-- siblings -->
+        <rect class="box sibling" x="44" y="145" width="132" height="34" rx="3" />
+        <text x="110" y="159" text-anchor="middle">HCC events chain</text>
+        <text class="slug" x="110" y="172" text-anchor="middle">hcc_events_chain_…</text>
+
+        <rect class="box sibling" x="424" y="145" width="132" height="34" rx="3" />
+        <text x="490" y="159" text-anchor="middle">Zeno categorization</text>
+        <text class="slug" x="490" y="172" text-anchor="middle">hcc_zeno_categoriz…</text>
+
+        <!-- self -->
+        <rect class="box self" x="222" y="132" width="156" height="48" rx="4" />
+        <text class="self-title" x="300" y="152" text-anchor="middle">★ HCC KPI strip rebind</text>
+        <text class="slug" x="300" y="168" text-anchor="middle">hcc_kpi_strip_rebind_…</text>
+
+        <!-- children -->
+        <rect class="box child" x="55" y="260" width="110" height="32" rx="3" />
+        <text x="110" y="280" text-anchor="middle">Child A</text>
+        <rect class="box child" x="245" y="260" width="110" height="32" rx="3" />
+        <text x="300" y="280" text-anchor="middle">Child B</text>
+        <rect class="box child" x="435" y="260" width="110" height="32" rx="3" />
+        <text x="490" y="280" text-anchor="middle">Child C</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- =========== Variant 3 =========== -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Variant 3 — Hand-drawn marker</h2>
+      <div class="desc">Wavy SVG-displaced strokes, slight box rotation jitter, cream paper, Caveat handwriting. Reads like a whiteboard sketch — playful, low commitment.</div>
+    </div>
+    <div class="stage v3-stage">
+      <svg class="v3" viewBox="0 0 600 320" width="100%" height="320" preserveAspectRatio="xMidYMid meet">
+        <!-- edges -->
+        <path class="edge" d="M 300 70 L 300 110 L 300 130" />
+        <path class="edge" d="M 300 70 L 300 100 L 110 100 L 110 145" />
+        <path class="edge" d="M 300 70 L 300 100 L 490 100 L 490 145" />
+        <path class="edge" d="M 300 200 L 300 230" />
+        <path class="edge" d="M 110 230 L 490 230" />
+        <path class="edge" d="M 110 230 L 110 260" />
+        <path class="edge" d="M 300 230 L 300 260" />
+        <path class="edge" d="M 490 230 L 490 260" />
+
+        <!-- parent -->
+        <g transform="rotate(-0.6 300 53)">
+          <rect class="box" x="240" y="36" width="120" height="34" rx="3" />
+          <text x="300" y="54" text-anchor="middle">HCC validation</text>
+          <text class="slug" x="300" y="67" text-anchor="middle">hcc_validation</text>
+        </g>
+
+        <!-- sibling left -->
+        <g transform="rotate(0.8 110 162)">
+          <rect class="box" x="50" y="145" width="120" height="34" rx="3" />
+          <text x="110" y="163" text-anchor="middle">HCC events chain</text>
+          <text class="slug" x="110" y="175" text-anchor="middle">events_chain</text>
+        </g>
+
+        <!-- self -->
+        <g transform="rotate(-0.4 300 158)">
+          <rect class="box self" x="226" y="132" width="148" height="50" rx="4" />
+          <text class="self-title" x="300" y="155" text-anchor="middle">★ KPI strip rebind</text>
+          <text class="slug" x="300" y="172" text-anchor="middle">kpi_strip_rebind</text>
+        </g>
+
+        <!-- sibling right -->
+        <g transform="rotate(0.5 490 162)">
+          <rect class="box" x="430" y="145" width="120" height="34" rx="3" />
+          <text x="490" y="163" text-anchor="middle">Zeno categorization</text>
+          <text class="slug" x="490" y="175" text-anchor="middle">zeno_categoriz</text>
+        </g>
+
+        <!-- children -->
+        <g transform="rotate(-1.0 110 275)">
+          <rect class="box" x="60" y="260" width="100" height="30" rx="3" />
+          <text x="110" y="280" text-anchor="middle">Child A</text>
+        </g>
+        <g transform="rotate(0.4 300 275)">
+          <rect class="box" x="250" y="260" width="100" height="30" rx="3" />
+          <text x="300" y="280" text-anchor="middle">Child B</text>
+        </g>
+        <g transform="rotate(-0.7 490 275)">
+          <rect class="box" x="440" y="260" width="100" height="30" rx="3" />
+          <text x="490" y="280" text-anchor="middle">Child C</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- =========== Variant 4 =========== -->
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Variant 4 — Kanban-card chunk</h2>
+      <div class="desc">Each node is a full mini-card: tier glyph + slug + age, soft shadow, rounded corners. Continuous with the existing kanban — bigger nodes, more info per box.</div>
+    </div>
+    <div class="stage v4-stage">
+      <svg class="v4" viewBox="0 0 600 320" width="100%" height="320" preserveAspectRatio="xMidYMid meet">
+        <!-- edges -->
+        <path class="edge" d="M 300 78 L 300 110 L 300 124" />
+        <path class="edge" d="M 300 78 L 300 100 L 90 100 L 90 138" />
+        <path class="edge" d="M 300 78 L 300 100 L 510 100 L 510 138" />
+        <path class="edge" d="M 300 208 L 300 232" />
+        <path class="edge" d="M 90 232 L 510 232" />
+        <path class="edge" d="M 90 232 L 90 256" />
+        <path class="edge" d="M 300 232 L 300 256" />
+        <path class="edge" d="M 510 232 L 510 256" />
+
+        <!-- Parent card -->
+        <rect class="card parent" x="222" y="32" width="156" height="46" />
+        <text class="glyph" x="234" y="52">📚</text>
+        <text x="252" y="51" font-weight="600">HCC validation</text>
+        <text class="slug" x="252" y="65">hcc_validation_2026-04-27</text>
+        <text class="age" x="368" y="51" text-anchor="end">12d</text>
+
+        <!-- Sibling left -->
+        <rect class="card sibling" x="20" y="138" width="140" height="46" />
+        <text class="glyph" x="30" y="158">📦</text>
+        <text x="48" y="157" font-weight="600">HCC events chain</text>
+        <text class="slug" x="48" y="171">events_chain</text>
+        <text class="age" x="152" y="157" text-anchor="end">2d</text>
+
+        <!-- Self -->
+        <rect class="card self" x="212" y="124" width="176" height="60" />
+        <text class="glyph" x="224" y="148">📝</text>
+        <text class="self-title" x="244" y="148">★ HCC KPI strip rebind</text>
+        <text class="slug" x="244" y="164">kpi_strip_rebind</text>
+        <text class="age" x="380" y="148" text-anchor="end">SELF</text>
+        <text x="244" y="178" font-size="9.5" fill="#0e7490">scratch · open</text>
+
+        <!-- Sibling right -->
+        <rect class="card sibling" x="440" y="138" width="140" height="46" />
+        <text class="glyph" x="450" y="158">📦</text>
+        <text x="468" y="157" font-weight="600">Zeno categorization</text>
+        <text class="slug" x="468" y="171">zeno_wireup</text>
+        <text class="age" x="572" y="157" text-anchor="end">9d</text>
+
+        <!-- Children -->
+        <rect class="card child" x="30" y="256" width="120" height="42" />
+        <text class="glyph" x="40" y="276">📝</text>
+        <text x="58" y="275" font-weight="600">Child A</text>
+        <text class="slug" x="58" y="288">child-1</text>
+
+        <rect class="card child" x="240" y="256" width="120" height="42" />
+        <text class="glyph" x="250" y="276">📝</text>
+        <text x="268" y="275" font-weight="600">Child B</text>
+        <text class="slug" x="268" y="288">child-2</text>
+
+        <rect class="card child" x="450" y="256" width="120" height="42" />
+        <text class="glyph" x="460" y="276">📝</text>
+        <text x="478" y="275" font-weight="600">Child C</text>
+        <text class="slug" x="478" y="288">child-3</text>
+      </svg>
+    </div>
+  </div>
+
+</section>
+
+<footer class="checklist">
+  <h3>Pick-the-variant checklist</h3>
+  <ul>
+    <li>Self box is clearly differentiated</li>
+    <li>Connectors are right-angle (no curves)</li>
+    <li>Hover state is legible in this aesthetic</li>
+    <li>Could I look at this 50× a day without fatigue?</li>
+  </ul>
+</footer>
+
+</body>
+</html>

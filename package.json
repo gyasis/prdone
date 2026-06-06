@@ -1,0 +1,121 @@
+{
+  "name": "prdone",
+  "displayName": "PRD Visualizer",
+  "description": "Read-only sidebar grid + browser kanban for the prd lifecycle CLI. Renders ~85 PRDs across scratch/archive/library tiers with copy-pasteable Claude Code commands.",
+  "version": "0.2.0-alpha",
+  "publisher": "gyasis",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gyasis/prdone.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=20.0.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:prd.openVisualizer",
+    "onCommand:prd.openKanban",
+    "onCommand:prd.refreshVisualizer",
+    "onCommand:prd.installSkills",
+    "onView:prd.sidebar"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Read-only PRD list renders in untrusted workspaces. Shelling to the prd CLI requires trust."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "prd.openVisualizer",
+        "title": "PRD: Open Visualizer",
+        "category": "PRD"
+      },
+      {
+        "command": "prd.openKanban",
+        "title": "PRD: Open Kanban (Browser)",
+        "category": "PRD"
+      },
+      {
+        "command": "prd.refreshVisualizer",
+        "title": "PRD: Refresh Visualizer",
+        "category": "PRD"
+      },
+      {
+        "command": "prd.installSkills",
+        "title": "PRD: Install Skills + CLI Into Home (~/.claude/skills + ~/bin)",
+        "category": "PRD"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "prd-container",
+          "title": "PRDs",
+          "icon": "$(notebook)"
+        }
+      ]
+    },
+    "views": {
+      "prd-container": [
+        {
+          "type": "webview",
+          "id": "prd.sidebar",
+          "name": "PRDs",
+          "contextualTitle": "PRD Visualizer"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PRD Visualizer",
+      "properties": {
+        "prd.binaryPath": {
+          "type": "string",
+          "default": "prd",
+          "description": "Path to the prd CLI binary. Use absolute path (e.g. /home/you/bin/prd) when VSCode is launched from a GUI."
+        },
+        "prd.kanbanBasePort": {
+          "type": "number",
+          "default": 7373,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Starting port for the bundled local kanban server. Walks upward 10 ports on collision."
+        },
+        "prd.autoRefreshMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 1440,
+          "description": "How often (in minutes) the visualizer auto-refreshes by re-running `prd summary --json`. Set to 0 to disable auto-refresh and rely on the manual refresh button only. Range 0-1440 (24h)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "vsce package -o dist/",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

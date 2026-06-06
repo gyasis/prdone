@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PRDs · Kanban</title>
+<!-- T037: shell page served by the bundled Express server. Loads the shared
+     frontend bundle (rendered in `kanban` mode) which fetches /api/prds. -->
+<link rel="stylesheet" href="/assets/styles.css">
+<link rel="stylesheet" href="/assets/browser-overrides.css">
+<style>
+  body { margin: 0; font-family: 'Geist', -apple-system, "Segoe UI", system-ui, sans-serif; }
+  #boot-status { padding: 24px; color: var(--ink-soft, #cbb59a); font-size: 14px; }
+  #boot-status code { font-family: 'Geist Mono', monospace; opacity: 0.7; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="boot-status">Loading PRDs from <code>/api/prds</code>…</div>
+</div>
+<script>
+  window.__PRD_RENDER_MODE__ = 'kanban';
+</script>
+<script src="/assets/bundle.js"></script>
+</body>
+</html>

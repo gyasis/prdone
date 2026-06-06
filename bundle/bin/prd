@@ -1,0 +1,3202 @@
+#!/usr/bin/env bash
+# prd — PRD lifecycle CLI wrapper (companion to ~/.claude/skills/prd/SKILL.md)
+#
+# Manages the three-tier PRD model:
+#   ~/dev/prd/scratch/   active, mutable
+#   ~/dev/prd/archive/   resolved, 30d cooling
+#   ~/dev/prd/library/   graduated, git-tracked
+#
+# Takes /tmp/claude-prd-skill.lock for the duration of any write operation so
+# the prd-guard PreToolUse hook permits skill-internal file edits.
+#
+# Usage:
+#   prd new <descriptor> [--parent <slug>] [--root]
+#   prd list [--include-archive] [--include-library]
+#   prd find [--branch <b>] [--repo <r>]
+#   prd link <id|slug>
+#   prd attach <id> [--session <uuid>] [--scope "<text>"]
+#   prd log <id> subagent <name>="<purpose>" [--result "<r>"]
+#   prd log <id> decision "<text>"
+#   prd log <id> note "<text>"
+#   prd diary <id> open [--focus "<text>"]
+#   prd diary <id> close [--pickup "<text>"]
+#   prd diary <id> append [--done|--discussed|--escalation|--pickup] "<text>"
+#   prd resolve <id> [--reason "<one sentence>"]
+#   prd graduate <id> [--tags "<t1,t2>"]
+#   prd revision <id> "<reason>"
+#   prd reopen <id>
+#   prd sweep
+#   prd doctor
+#
+# Decision Rule (runs inside `prd new` when no --parent / --root flag):
+#   Detects current git branch + repo, finds most-recent scratch PRD with
+#   matching **Branch:** / **Repo:** headers. If a candidate exists, exits 2
+#   with a redirect to APPEND-NOTE (<4h or token-overlap≥50%) or SUB-PRD
+#   (<14d). See ~/.claude/rules/domains/plan-persistence.md.
+#
+# Session auto-tracking:
+#   When run inside Claude Code (CLAUDECODE=1), link/log/resolve/graduate/revision/attach
+#   auto-append the current session UUID to the PRD's `## Sessions` section
+#   (idempotent — same UUID never appended twice). Disable with PRD_NO_AUTO_ATTACH=1.
+
+set -euo pipefail
+
+# ---------- paths ----------
+PRD_ROOT="${PRD_ROOT:-$HOME/dev/prd}"
+SCRATCH="$PRD_ROOT/scratch"
+ARCHIVE="$PRD_ROOT/archive"
+LIBRARY="$PRD_ROOT/library"
+LOCK="/tmp/claude-prd-skill.lock"
+# Sentinel-based owner resolver (PRD prd_active_registry_cross_contamination §8 Rank-1).
+# Walks UP from cwd looking for `.memory/.prd-owner` — the explicit "this dir is a PRD owner"
+# sentinel. Coincidental `.memory/` dirs (e.g. ~/dev/.memory/ with session.json) are SKIPPED
+# unless they have the sentinel. Empty result means no legit owner found → caller must handle.
+resolve_owner_path() {
+  local d="$(pwd)"
+  while [ -n "$d" ] && [ "$d" != "/" ] && [ "$d" != "$HOME" ]; do
+    if [ -f "$d/.memory/.prd-owner" ]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+    d="$(dirname "$d")"
+  done
+  # No sentinel anywhere up the tree → return empty (no legit owner)
+  return 1
+}
+
+# Read scope from a .prd-owner sentinel ("project" | "root" | "").
+read_owner_scope() {
+  local owner="$1"
+  [ -z "$owner" ] && return 0
+  local sentinel="$owner/.memory/.prd-owner"
+  [ -f "$sentinel" ] || return 0
+  grep -m1 '^scope=' "$sentinel" 2>/dev/null | cut -d= -f2- | tr -d '\r'
+}
+
+OWNER_PATH="$(resolve_owner_path || true)"
+OWNER_SCOPE="$(read_owner_scope "$OWNER_PATH" || true)"
+if [ -n "$OWNER_PATH" ]; then
+  ACTIVE_JSON="$OWNER_PATH/.memory/active-prds.json"
+else
+  # Pre-sentinel fallback — preserves current behavior so the CLI keeps working
+  # while sentinels are rolled out. cmd_new emits Layer-2 WARN-with-options on this case.
+  ACTIVE_JSON="$HOME/dev/.memory/active-prds.json"
+fi
+
+mkdir -p "$SCRATCH" "$ARCHIVE" "$LIBRARY"
+
+# ---------- lock ceremony ----------
+take_lock() {
+  # Idempotent: if the lock exists and points to our pid, that's fine
+  if [ -f "$LOCK" ]; then
+    local existing
+    existing="$(cat "$LOCK" 2>/dev/null || echo)"
+    if [ -n "$existing" ] && [ "$existing" != "$$" ] && kill -0 "$existing" 2>/dev/null; then
+      echo "prd: another /prd skill session active (pid=$existing). Abort or wait." >&2
+      exit 1
+    fi
+  fi
+  echo "$$" > "$LOCK"
+  trap 'rm -f "$LOCK"' EXIT HUP INT TERM
+}
+
+release_lock() {
+  rm -f "$LOCK"
+}
+
+# ---------- helpers ----------
+today() { date +%Y-%m-%d; }
+now_iso() { date -Iseconds; }
+die() { echo "prd: $*" >&2; exit 1; }
+
+# Spec 002 — move companion files alongside the .md when transitioning tiers.
+# Called by cmd_resolve / cmd_graduate / cmd_sweep / cmd_reopen after the
+# primary .md move. Rolls back partial moves if any single move fails.
+# Usage: move_companions <source-md-path> <dest-dir>
+move_companions() {
+  local src_md_path="$1" dest_dir="$2"
+  local src_dir; src_dir="$(dirname "$src_md_path")"
+  local stem; stem="$(basename "$src_md_path" .md)"
+  local moved=()
+  for cext in html pdf pptx ipynb; do
+    local src_comp="$src_dir/$stem.$cext"
+    [ -e "$src_comp" ] || continue
+    local dest_comp="$dest_dir/$stem.$cext"
+    if mv "$src_comp" "$dest_comp" 2>/dev/null; then
+      moved+=("$cext")
+      echo "prd: moved companion → $(basename "$dest_comp")" >&2
+    else
+      echo "prd: ERROR moving companion $src_comp → $dest_comp; rolling back" >&2
+      for r_ext in "${moved[@]}"; do
+        mv "$dest_dir/$stem.$r_ext" "$src_dir/$stem.$r_ext" 2>/dev/null || true
+      done
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Detect current Claude Code session UUID. Returns most-recent JSONL filename
+# (without .jsonl extension) modified in the last 10 minutes across all
+# ~/.claude/projects/ subdirs. Empty string if outside Claude Code or no match.
+detect_session_uuid() {
+  [ -n "${CLAUDECODE:-}" ] || return 0
+  [ -d "$HOME/.claude/projects" ] || return 0
+  local newest
+  newest="$(find "$HOME/.claude/projects" -maxdepth 2 -name '*.jsonl' -mmin -10 -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+  [ -n "$newest" ] || return 0
+  basename "$newest" .jsonl
+}
+
+# Append session UUID to PRD's ## Sessions section (idempotent).
+# Args: $1=file_path  $2=session_uuid  $3=scope_text(optional)
+# Creates ## Sessions section if missing (placed before ## Ephemeral Marker, else at end).
+# Silent no-op when uuid empty or PRD_NO_AUTO_ATTACH=1.
+attach_session() {
+  local file="$1" uuid="$2" scope="${3:-}"
+  [ -n "$uuid" ] || return 0
+  [ -z "${PRD_NO_AUTO_ATTACH:-}" ] || return 0
+  [ -f "$file" ] || return 0
+  python3 - "$file" "$uuid" "$scope" "$(today)" <<'PY'
+import sys, pathlib, re
+p, uuid, scope, today = sys.argv[1:5]
+path = pathlib.Path(p)
+text = path.read_text()
+if uuid in text:
+    sys.exit(0)
+new_row = f"| {today} | `{uuid}` | {scope or '(unspecified)'} |"
+
+sessions_re = re.compile(r'^## \d*\.?\s*Sessions\b.*?\n', re.M)
+m = sessions_re.search(text)
+if m:
+    start = m.end()
+    next_section = re.search(r'^## ', text[start:], re.M)
+    insert_at = start + (next_section.start() if next_section else len(text) - start)
+    before = text[:insert_at].rstrip() + "\n"
+    after = text[insert_at:]
+    new_text = before + new_row + "\n\n" + after
+else:
+    eph_re = re.compile(r'^## \d*\.?\s*Ephemeral Marker\b', re.M)
+    em = eph_re.search(text)
+    new_section = (
+        "\n## 9. Sessions\n\n"
+        "| Date | Session UUID | Scope |\n"
+        "|---|---|---|\n"
+        f"{new_row}\n"
+    )
+    if em:
+        new_text = text[:em.start()].rstrip() + "\n" + new_section + "\n" + text[em.start():]
+    else:
+        new_text = text.rstrip() + "\n" + new_section
+path.write_text(new_text)
+PY
+}
+
+# Auto-attach current session if running inside Claude Code. Silent on failure.
+auto_attach() {
+  local file="$1" scope="${2:-}"
+  local uuid; uuid="$(detect_session_uuid 2>/dev/null || true)"
+  [ -n "$uuid" ] || return 0
+  attach_session "$file" "$uuid" "$scope" 2>/dev/null || true
+}
+
+# Resolve an "id" (filename stem or partial) to a full path across all tiers.
+resolve_id() {
+  local query="$1"
+  local hits=()
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    for f in "$tier"/*.md; do
+      [ -e "$f" ] || continue
+      case "$(basename "$f" .md)" in
+        *"$query"*) hits+=("$f") ;;
+      esac
+    done
+  done
+  if [ "${#hits[@]}" -eq 0 ]; then
+    die "no PRD found matching '$query'"
+  elif [ "${#hits[@]}" -gt 1 ]; then
+    echo "prd: ambiguous — multiple matches:" >&2
+    printf '  %s\n' "${hits[@]}" >&2
+    exit 1
+  fi
+  echo "${hits[0]}"
+}
+
+# ---------- tag ontology (origin 2026-05-12) ----------
+# 5-namespace closed ontology: domain: payor: type: repo: jira:  + free-form survives.
+# See ~/dev/prd/scratch/prd_tag_ontology_2026-05-12.md for the full spec.
+
+# Read current tags from a PRD frontmatter — returns CSV (no spaces).
+read_tags() {
+  local file="$1"
+  python3 - "$file" <<'PY'
+import sys, re, pathlib
+text = pathlib.Path(sys.argv[1]).read_text()
+m = re.match(r'---\n(.*?)\n---', text, re.S)
+if not m:
+    print("")
+    raise SystemExit
+for line in m.group(1).splitlines():
+    if line.startswith("tags:"):
+        v = line.split(":", 1)[1].strip().strip("[]")
+        print(",".join(t.strip() for t in v.split(",") if t.strip()))
+        raise SystemExit
+print("")
+PY
+}
+
+# Write a tag set to PRD frontmatter — idempotent, lossless on body.
+# Usage: write_tags <file> <comma-separated-tags>
+write_tags() {
+  local file="$1" tags="$2"
+  python3 - "$file" "$tags" <<'PY'
+import sys, re, pathlib
+path = pathlib.Path(sys.argv[1])
+new_tags = [t.strip() for t in sys.argv[2].split(",") if t.strip()]
+text = path.read_text()
+tag_line = f"tags: [{', '.join(new_tags)}]"
+m = re.match(r'(---\n)(.*?)(\n---\n?)', text, re.S)
+if m:
+    head, body, close = m.group(1), m.group(2), m.group(3)
+    lines = body.splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith("tags:"):
+            lines[i] = tag_line
+            found = True
+            break
+    if not found:
+        lines.append(tag_line)
+    rest = text[m.end():]
+    path.write_text(head + "\n".join(lines) + close + rest)
+else:
+    # No frontmatter — prepend a minimal one
+    fm = f"---\n{tag_line}\n---\n\n"
+    path.write_text(fm + text)
+PY
+}
+
+# Run auto-detect tagger against a single PRD file. Preserves free-form tags.
+# Output: CSV of merged tag set (detected namespaced + preserved free-form).
+auto_tag() {
+  local file="$1"
+  local current
+  current=$(read_tags "$file")
+  python3 - "$file" "$current" <<'PY'
+import sys, re, pathlib
+
+TAG_RULES = {
+  "domain": [
+    (r"\bhcc\b|hierarchical condition", "hcc"),
+    (r"\braf\b|risk adjustment", "raf"),
+    (r"\bhedis\b", "hedis"),
+    (r"\bcdia\b", "cdia"),
+    (r"care ?plan|\bccm\b", "careplan"),
+    (r"\btcm\b|transitional care", "tcm"),
+    (r"\bawv\b|annual wellness", "awv"),
+    (r"\bscheduling\b|\bcapacity\b", "scheduling"),
+    (r"behavioral health|mental health", "behavioral-health"),
+    (r"\bmembership\b|\benrollment\b", "membership"),
+    (r"\battribution\b", "attribution"),
+    (r"\bquality\b", "quality"),
+  ],
+  "payor": [
+    (r"\bbcbs\b|blue cross|blue shield", "bcbs"),
+    (r"\bmedicare\b|\bcms\b", "medicare"),
+    (r"\baetna\b", "aetna"),
+    (r"\buhc\b|united ?health", "uhc"),
+    (r"\bcigna\b", "cigna"),
+    (r"\bhumana\b", "humana"),
+    (r"multi[- ]payor|payor[- ]agnostic", "multi"),
+  ],
+  "type": [
+    (r"\baudit\b|\breview\b|\bassessment\b", "audit"),
+    (r"postmortem|retrospective", "postmortem"),
+    (r"\bbugfix\b|\bhotfix\b", "bugfix"),
+    (r"\brefactor\b|\brewrite\b|\bcleanup\b", "refactor"),
+    (r"\bspike\b|investigation|\bexplore\b", "spike"),
+    (r"\bdoc(s|umentation)?\b", "doc"),
+    (r"\bmigration\b|\bcutover\b|\bport\b", "migration"),
+    (r"new feature|implementation", "feature"),
+  ],
+  "tool": [
+    (r"\bagentbridge\b|agent ?bridge", "agentbridge"),
+    (r"\bpromptchain\b|prompt ?chain", "promptchain"),
+    (r"\bdspy\b", "dspy"),
+    (r"\bchiron\b", "chiron"),
+    (r"\bsio\b|session intelligence", "sio"),
+    (r"\bprdone\b|prd visualizer", "prdone"),
+    (r"\bhhdev\b|hh-dev", "hhdev"),
+    (r"\bzeno\b", "zeno"),
+    (r"\bcube\b|cube\.dev|cube\.js", "cube"),
+    (r"\btuva\b", "tuva"),
+    (r"\bgraphiti\b", "graphiti"),
+    (r"\bhybridrag\b|hybrid ?rag", "hybridrag"),
+    (r"\bsuperset\b", "superset"),
+    (r"\btableau\b", "tableau"),
+    (r"\bdatabricks\b", "databricks"),
+    (r"\bsnowflake\b|snowsql", "snowflake"),
+    (r"\bclaude code\b", "claude-code"),
+  ],
+}
+KNOWN_NS = set(TAG_RULES.keys()) | {"repo", "jira"}
+
+path = pathlib.Path(sys.argv[1])
+current = [t.strip() for t in sys.argv[2].split(",") if t.strip()]
+text = path.read_text()
+
+# Strip frontmatter to scan body only
+m = re.match(r'---\n.*?\n---\n', text, re.S)
+body = text[m.end():] if m else text
+
+title_match = re.search(r'^#\s+(.+)$', body, re.M)
+title = title_match.group(1) if title_match else ""
+haystack = (title + " " + body[:1500]).lower()
+
+detected = set()
+for ns, rules in TAG_RULES.items():
+    for pattern, value in rules:
+        if re.search(pattern, haystack, re.I):
+            detected.add(f"{ns}:{value}")
+
+# repo: from frontmatter Repo: line — accept only simple slug, not paths
+repo_match = re.search(r'^\*\*Repo:\*\*\s*([a-zA-Z0-9_-]+)\s*$', body, re.M)
+if repo_match:
+    repo = repo_match.group(1)
+    if repo and repo != "none":
+        detected.add(f"repo:{repo}")
+
+# jira: from body — allowlist of known Jira project prefixes used at HH/personal
+# to prevent false positives like ICD-10 (medical coding), AP-001 (anti-pattern),
+# OI-1 (open item), PHASE-1 (section reference), etc.
+JIRA_PREFIXES = {"DEV", "RAF", "HCC", "CDIA", "BAS", "TIC", "SAL", "CCM", "QUAL"}
+for jm in re.finditer(r'\b([A-Z]{2,8})-(\d{1,5})\b', body):
+    if jm.group(1) in JIRA_PREFIXES:
+        detected.add(f"jira:{jm.group(0)}")
+
+# Preserve free-form tags (no namespace) and unknown-namespace tags
+preserved = [t for t in current if ":" not in t or t.split(":",1)[0] not in KNOWN_NS]
+
+# Final: sorted detected + free-form (dedup)
+seen = set(detected)
+final = sorted(detected)
+for t in preserved:
+    if t not in seen:
+        final.append(t)
+        seen.add(t)
+print(",".join(final))
+PY
+}
+
+cmd_tag_audit() {
+  # Continuous-coverage check: report (and optionally fix) PRDs with empty tags.
+  # Usage:
+  #   prd tag-audit            — report-only (lists empty PRDs)
+  #   prd tag-audit --fix      — run auto_tag on each empty PRD, write whatever sticks
+  local fix=0
+  if [ "${1:-}" = "--fix" ]; then fix=1; fi
+
+  local empty_count=0 fixed_count=0 still_empty=()
+  for tier in "$SCRATCH" "$ARCHIVE"; do
+    for f in "$tier"/*.md; do
+      [ -e "$f" ] || continue
+      local current after
+      current=$(read_tags "$f")
+      if [ -z "$current" ]; then
+        empty_count=$(( empty_count + 1 ))
+        if [ $fix -eq 1 ]; then
+          after=$(auto_tag "$f")
+          if [ -n "$after" ]; then
+            write_tags "$f" "$after"
+            fixed_count=$(( fixed_count + 1 ))
+            echo "  ⊕ $(basename "$f"): [$after]"
+          else
+            still_empty+=("$(basename "$f")")
+          fi
+        else
+          echo "  ∅ $(basename "$f")"
+        fi
+      fi
+    done
+  done
+  echo ""
+  if [ $fix -eq 1 ]; then
+    echo "prd tag-audit --fix: $empty_count empty → $fixed_count tagged, ${#still_empty[@]} still need manual"
+    if [ ${#still_empty[@]} -gt 0 ]; then
+      echo ""
+      echo "Still empty (auto-detector found no signal — manually tag with 'prd tag <id> add <ns>:<value>'):"
+      for slug in "${still_empty[@]}"; do echo "  - $slug"; done
+    fi
+  else
+    echo "prd tag-audit: $empty_count untagged (re-run with --fix to auto-tag where possible)"
+  fi
+}
+
+cmd_tag() {
+  local id="$1"; shift || die "usage: prd tag <id> <add|remove|set|auto|show> [args]"
+  local action="$1"; shift || die "usage: prd tag <id> <add|remove|set|auto|show> [args]"
+  local file; file="$(resolve_id "$id")"
+  local current; current=$(read_tags "$file")
+  local new
+
+  case "$action" in
+    show)
+      [ -n "$current" ] && echo "$current" || echo "(no tags)"
+      return 0
+      ;;
+    add)
+      local incoming="${1:-}"; [ -n "$incoming" ] || die "usage: prd tag <id> add <t1[,t2]>"
+      new=$(python3 -c "
+cur = set(t.strip() for t in '''$current'''.split(',') if t.strip())
+add = set(t.strip() for t in '''$incoming'''.split(',') if t.strip())
+print(','.join(sorted(cur | add)))")
+      ;;
+    remove)
+      local incoming="${1:-}"; [ -n "$incoming" ] || die "usage: prd tag <id> remove <t1[,t2]>"
+      new=$(python3 -c "
+cur = set(t.strip() for t in '''$current'''.split(',') if t.strip())
+rem = set(t.strip() for t in '''$incoming'''.split(',') if t.strip())
+print(','.join(sorted(cur - rem)))")
+      ;;
+    set)
+      local incoming="${1:-}"; [ -n "$incoming" ] || die "usage: prd tag <id> set <t1[,t2]>"
+      new="$incoming"
+      ;;
+    auto)
+      new=$(auto_tag "$file")
+      ;;
+    *) die "unknown action: $action (try add|remove|set|auto|show)" ;;
+  esac
+
+  write_tags "$file" "$new"
+  echo "prd: tagged $(basename "$file"): [$new]"
+}
+
+# ---------- end tag ontology ----------
+
+# Detect git branch + repo for the current directory. Returns "none" when not in a repo.
+detect_git_branch() { git -C "$(pwd)" rev-parse --abbrev-ref HEAD 2>/dev/null || echo none; }
+detect_git_repo()   { local r; r=$(git -C "$(pwd)" rev-parse --show-toplevel 2>/dev/null) && basename "$r" || echo none; }
+
+# Find the most-recently-modified scratch PRD whose **Branch:** AND **Repo:** match.
+# Args: $1=branch  $2=repo
+# Output: full path of the candidate, or empty.
+find_candidate_parent() {
+  local branch="$1" repo="$2"
+  [ -n "$branch" ] || return 0
+  [ "$branch" = "none" ] && return 0
+  [ "$branch" = "main" ] && return 0
+  [ "$branch" = "master" ] && return 0
+  local hits=()
+  for f in "$SCRATCH"/*.md; do
+    [ -e "$f" ] || continue
+    grep -q "^\*\*Branch:\*\* ${branch}$" "$f" 2>/dev/null || continue
+    grep -q "^\*\*Repo:\*\* ${repo}$" "$f" 2>/dev/null || continue
+    hits+=("$f")
+  done
+  [ "${#hits[@]}" -eq 0 ] && return 0
+  # Most recent by mtime
+  ls -t "${hits[@]}" 2>/dev/null | head -1
+}
+
+# Print top 3-5 nearby PRD candidates for a descriptor, ranked by token overlap
+# with the slug + tag overlap + branch/repo match + recency. Implements the
+# Preference Override from ~/.claude/rules/domains/plan-persistence.md
+# (BLOCKING, origin 2026-05-19): surface options BEFORE creating a new root.
+# Args: $1=descriptor  $2=branch  $3=repo
+# Output: human-readable candidate list to stderr. Always exits 0.
+print_candidates_table() {
+  local descriptor="$1" branch="$2" repo="$3"
+  python3 - "$SCRATCH" "$descriptor" "$branch" "$repo" >&2 <<'PY'
+import sys, pathlib, re, os
+scratch, descriptor, branch, repo = sys.argv[1:5]
+desc_tokens = set(t for t in descriptor.lower().replace("-", "_").split("_") if t)
+rows = []
+for p in pathlib.Path(scratch).glob("*.md"):
+    text = p.read_text(errors="replace")
+    slug = p.stem
+    slug_tokens = set(t for t in slug.lower().replace("-", "_").split("_") if t)
+    inter = len(desc_tokens & slug_tokens)
+    union = len(desc_tokens | slug_tokens)
+    overlap = int(round(100 * inter / union)) if union else 0
+    # Tag/branch/repo signals
+    fm = re.match(r'---\n(.*?)\n---', text, re.S)
+    tags = ""
+    if fm:
+        for line in fm.group(1).splitlines():
+            if line.startswith("tags:"):
+                tags = line.split(":", 1)[1].strip().strip("[]").strip()
+    # Skip branch/repo matching when caller had no git context — 'none' would
+    # otherwise match every PRD literally written as 'none' and dominate results.
+    branch_match = 1 if branch and branch != "none" and re.search(rf'^\*\*Branch:\*\*\s*{re.escape(branch)}\s*$', text, re.M) else 0
+    repo_match = 1 if repo and repo != "none" and re.search(rf'^\*\*Repo:\*\*\s*{re.escape(repo)}\s*$', text, re.M) else 0
+    # Skip if zero signal
+    if overlap == 0 and branch_match == 0 and repo_match == 0:
+        continue
+    age_days = int((__import__("time").time() - p.stat().st_mtime) / 86400)
+    # Composite score: overlap weight + branch/repo bonuses, recency tiebreak
+    score = overlap + (branch_match * 25) + (repo_match * 15) - min(age_days, 30)
+    # Title from H1
+    tm = re.search(r'^#\s+(.+)$', text, re.M)
+    title = tm.group(1).strip() if tm else slug
+    rows.append((score, overlap, branch_match, repo_match, age_days, slug, title, tags))
+rows.sort(key=lambda r: (-r[0], r[4]))
+rows = rows[:5]
+if not rows:
+    print("prd: no nearby candidates found by token/branch/repo overlap.")
+    print("prd: per ~/.claude/rules/domains/plan-persistence.md §Preference Override:")
+    print("prd:   you can proceed with `prd new <descriptor>` (no plausible existing fit).")
+    sys.exit(0)
+print("")
+print("━━━ NEARBY CANDIDATES (per Preference Override — prefer APPEND-NOTE > SUB-PRD > NEW-ROOT) ━━━")
+print(f"{'SLUG':<58} {'OVR':>4} {'BR':>3} {'REPO':>4} {'AGE':>4}  TAGS")
+print("-" * 110)
+for score, overlap, br, rp, age, slug, title, tags in rows:
+    short_tags = tags[:38] + "…" if len(tags) > 39 else tags
+    print(f"{slug[:58]:<58} {overlap:>3}% {('✓' if br else '·'):>3} {('✓' if rp else '·'):>4} {age:>3}d  {short_tags}")
+print("")
+print("To attach to one of the above instead of creating new:")
+print("  APPEND-NOTE:  prd log <slug> note \"" + descriptor + "\"")
+print("  SUB-PRD:      prd new --parent <slug> " + descriptor)
+print("")
+print("If none truly fit, you can force a new root:")
+print("  NEW-ROOT:     prd new --root " + descriptor)
+print("")
+PY
+}
+
+# Jaccard-overlap of snake_case tokens between two strings.
+# Args: $1=string_a  $2=string_b — prints overlap in [0..100] (integer percent).
+token_overlap_pct() {
+  local a="$1" b="$2"
+  python3 - "$a" "$b" <<'PY'
+import sys
+a = set(sys.argv[1].lower().replace("-", "_").split("_"))
+b = set(sys.argv[2].lower().replace("-", "_").split("_"))
+a.discard(""); b.discard("")
+if not a or not b:
+    print(0); raise SystemExit
+inter = len(a & b)
+union = len(a | b)
+print(int(round(100 * inter / union)) if union else 0)
+PY
+}
+
+# Validate descriptor — 3+ snake_case words
+validate_descriptor() {
+  local d="$1"
+  local words
+  words=$(echo "$d" | tr '_' '\n' | grep -c .)
+  if [ "$words" -lt 3 ]; then
+    die "descriptor must have at least 3 snake_case words (got $words: '$d')"
+  fi
+  if ! echo "$d" | grep -qE '^[a-z0-9_]+$'; then
+    die "descriptor must be snake_case lowercase alphanumeric only (got '$d')"
+  fi
+}
+
+# Append entry to active-prds.json (project-local breadcrumb)
+# Now includes branch_at_creation + owner_path so T5 branch-guard hook can verify
+# directly from the registry without grep-ing PRD bodies. (PRD prd_active_registry_cross_contamination_2026-05-15 §L1)
+breadcrumb_add() {
+  local path="$1" descriptor="$2" id="$3"
+  local dir="$(dirname "$ACTIVE_JSON")"
+  mkdir -p "$dir"
+  local branch_now owner_now session_now
+  branch_now="$(detect_git_branch 2>/dev/null || true)"
+  owner_now="${OWNER_PATH:-}"
+  session_now="${CLAUDE_SESSION_ID:-${SESSION_ID:-}}"
+  python3 - "$ACTIVE_JSON" "$path" "$descriptor" "$id" "$(today)" "$branch_now" "$owner_now" "$session_now" <<'PY'
+import json, sys, pathlib, fcntl, os
+p = pathlib.Path(sys.argv[1])
+path, descriptor, pid, created, branch, owner, session = sys.argv[2:9]
+# flock-guarded read+modify+write (PRD §8 H7).
+lockfile = str(p) + ".lock"
+fd = os.open(lockfile, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    data = json.loads(p.read_text()) if p.exists() else {"active": []}
+    data.setdefault("active", [])
+    if not any(e.get("path") == path for e in data["active"]):
+        entry = {
+            "id": pid,
+            "path": path,
+            "status": "open",
+            "created": created,
+            "descriptor": descriptor,
+        }
+        if branch: entry["branch_at_creation"] = branch
+        if owner:  entry["owner_path"] = owner
+        if session: entry["session_origin"] = session
+        data["active"].append(entry)
+        p.write_text(json.dumps(data, indent=2) + "\n")
+finally:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+PY
+}
+
+# Add a PRD to the breadcrumb if it's not already tracked anywhere.
+# Used by `prd link` to fix orphan PRDs that exist in scratch but never got registered.
+breadcrumb_add_if_orphan() {
+  local path="$1"
+  [ -f "$path" ] || return 0
+  # Check current ACTIVE_JSON and all other .memory dirs we know about
+  local stem; stem="$(basename "$path" .md)"
+  for f in "$ACTIVE_JSON" $(find "$HOME/dev" -maxdepth 4 -path '*/.memory/active-prds.json' 2>/dev/null); do
+    [ -f "$f" ] || continue
+    if jq -e --arg p "$path" '.active[]? | select(.path == $p)' "$f" >/dev/null 2>&1; then
+      return 0  # already tracked somewhere
+    fi
+    if jq -e --arg p "$path" '.prd_paths[]? | select(. == $p)' "$f" >/dev/null 2>&1; then
+      return 0  # Schema B match
+    fi
+  done
+  # Not tracked anywhere — register in current resolved ACTIVE_JSON
+  breadcrumb_add "$path" "$stem" "$stem"
+}
+
+breadcrumb_update_path() {
+  local oldpath="$1" newpath="$2"
+  python3 - "$ACTIVE_JSON" "$oldpath" "$newpath" <<'PY'
+import json, sys, pathlib, fcntl, os
+p = pathlib.Path(sys.argv[1])
+old, new = sys.argv[2], sys.argv[3]
+if not p.exists(): sys.exit(0)
+lockfile = str(p) + ".lock"
+fd = os.open(lockfile, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    data = json.loads(p.read_text())
+    changed = False
+    for e in data.get("active", []):
+        if e.get("path") == old:
+            e["path"] = new
+            changed = True
+    if changed:
+        p.write_text(json.dumps(data, indent=2) + "\n")
+finally:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+PY
+}
+
+breadcrumb_remove() {
+  local path="$1"
+  python3 - "$ACTIVE_JSON" "$path" <<'PY'
+import json, sys, pathlib, fcntl, os
+p = pathlib.Path(sys.argv[1])
+path = sys.argv[2]
+if not p.exists(): sys.exit(0)
+lockfile = str(p) + ".lock"
+fd = os.open(lockfile, os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    data = json.loads(p.read_text())
+    data["active"] = [e for e in data.get("active", []) if e.get("path") != path]
+    p.write_text(json.dumps(data, indent=2) + "\n")
+finally:
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+PY
+}
+
+# ---------- subcommands ----------
+
+cmd_new() {
+  local descriptor="" parent_slug="" force_root=0 emit_html=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --parent) parent_slug="$2"; shift 2 ;;
+      --root)   force_root=1; shift ;;
+      --html)   emit_html=1; shift ;;
+      --) shift; descriptor="${1:-$descriptor}"; shift || true ;;
+      -*) die "unknown flag: $1" ;;
+      *)  [ -z "$descriptor" ] && descriptor="$1" || die "extra arg: $1"; shift ;;
+    esac
+  done
+  [ -n "$descriptor" ] || die "usage: prd new <descriptor> [--parent <slug>] [--root] [--html]"
+  validate_descriptor "$descriptor"
+
+  # Preference Override (origin 2026-05-19): print nearby candidates BEFORE
+  # the threshold-driven Decision Rule so the agent/user sees reuse options
+  # even when no single candidate trips the CONFLICT threshold. Runs only when
+  # neither --parent nor --root was explicitly supplied (those are intentional
+  # overrides). See ~/.claude/rules/domains/plan-persistence.md §Preference
+  # Override.
+  if [ -z "$parent_slug" ] && [ "$force_root" -eq 0 ]; then
+    local _br _rp
+    _br="$(detect_git_branch)"
+    _rp="$(detect_git_repo)"
+    print_candidates_table "$descriptor" "$_br" "$_rp"
+  fi
+
+  # Decision Rule (router) — runs ONLY if neither --parent nor --root supplied.
+  # See ~/.claude/rules/domains/plan-persistence.md §Decision Rule.
+  if [ -z "$parent_slug" ] && [ "$force_root" -eq 0 ]; then
+    local branch repo candidate
+    branch="$(detect_git_branch)"
+    repo="$(detect_git_repo)"
+    candidate="$(find_candidate_parent "$branch" "$repo")"
+    if [ -n "$candidate" ]; then
+      local cand_slug; cand_slug="$(basename "$candidate" .md)"
+      local age_sec=$(( $(date +%s) - $(stat -c %Y "$candidate") ))
+      local overlap; overlap="$(token_overlap_pct "$descriptor" "$cand_slug")"
+      # APPEND-NOTE if <4h OR overlap >=50
+      # SUB-PRD if mtime <14d
+      # else NEW-ROOT
+      if [ "$age_sec" -lt 14400 ] || [ "$overlap" -ge 50 ]; then
+        cat <<EOF >&2
+CONFLICT: An active PRD on branch '${branch}' (repo '${repo}') overlaps your descriptor: ${cand_slug}
+
+Most likely intent: APPEND a small note (sticks to existing scope).
+  prd log ${cand_slug} note "${descriptor}"
+
+Otherwise:
+  Start a sub-task (forks the work):
+    prd new --parent ${cand_slug} ${descriptor}
+
+  Force a new root (you're sure this is unrelated):
+    prd new --root ${descriptor}
+EOF
+        exit 2
+      elif [ "$age_sec" -lt $((14 * 86400)) ]; then
+        cat <<EOF >&2
+CONFLICT: An active PRD already exists on branch '${branch}' (repo '${repo}'): ${cand_slug}
+
+Most likely intent: SUB-PRD (forks under the parent).
+  prd new --parent ${cand_slug} ${descriptor}
+
+Otherwise:
+  Append a small note (sticks to existing scope):
+    prd log ${cand_slug} note "${descriptor}"
+
+  Force a new root (you're sure this is unrelated):
+    prd new --root ${descriptor}
+EOF
+        exit 2
+      fi
+    fi
+  fi
+
+  local stem="${descriptor}_$(today)"
+  local file="$SCRATCH/${stem}.md"
+
+  # Collision check across all tiers
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -e "$tier/${stem}.md" ] && die "already exists: $tier/${stem}.md"
+  done
+
+  # If --parent supplied, verify the parent PRD exists in scratch/.
+  local parent_path=""
+  if [ -n "$parent_slug" ]; then
+    parent_path="$SCRATCH/${parent_slug}.md"
+    [ -f "$parent_path" ] || die "--parent: no scratch PRD with slug '${parent_slug}' (looked at $parent_path)"
+  fi
+
+  # Prompt for ephemeral marker (REQUIRED)
+  local marker=""
+  if [ -t 0 ]; then
+    echo "prd: Ephemeral marker (when should this PRD be deleted?) — required, one line:"
+    read -r marker
+  else
+    marker="${PRD_EPHEMERAL:-<UNSET — fill before resolving>}"
+  fi
+  [ -z "$marker" ] && die "ephemeral marker is required"
+
+  take_lock
+
+  local title
+  title="$(echo "$descriptor" | tr '_' ' ' | sed 's/\b\(.\)/\u\1/g')"
+
+  # Capture git context AT CREATION TIME (used by the Decision Rule for future routing).
+  local hdr_branch hdr_repo
+  hdr_branch="$(detect_git_branch)"
+  hdr_repo="$(detect_git_repo)"
+
+  # Layer-1 anchor (PRD owns truth): owner_path + session_origin + branch_at_creation.
+  # See PRD prd_active_registry_cross_contamination_2026-05-15.md design L1-L4.
+  local hdr_owner hdr_session
+  hdr_owner="${OWNER_PATH:-<UNRESOLVED — outside ~/dev/>}"
+  hdr_session="${CLAUDE_SESSION_ID:-${SESSION_ID:-<UNSET>}}"
+
+  # Layer-2 sentinel-aware WARN (PRD §8 Rank-1, Rank-4).
+  # Fires when no `.prd-owner` sentinel was found up-tree.
+  # --root carveout: explicit opt-in for global/root-tier PRDs.
+  if [ -z "$OWNER_PATH" ] && [ "$force_root" -eq 0 ]; then
+    cat >&2 <<EOF
+prd: WARN — no `.prd-owner` sentinel found walking up from $(pwd).
+     Without a sentinel this PRD has no legitimate scope and would leak to a fallback registry.
+     (This is the bug class that caused the 2026-05-15 cross-contamination.)
+
+  Options:
+    1. Bootstrap project-local .memory/ owner in $(pwd):
+         prd init-owner --scope project --description "<one line>"
+    2. Bootstrap in a parent directory (a real project root):
+         cd <project-root> && prd init-owner --scope project --description "<one line>"
+    3. This is a legitimately root-tier / cross-cutting PRD → re-run with:
+         prd new --root <descriptor>
+       (requires ~/dev/.memory/.prd-owner with scope=root to exist; bootstrap with:
+          prd init-owner --root-tier --description "root-tier registry for cross-cutting PRDs")
+    4. Abort (Ctrl-C)
+
+EOF
+    release_lock
+    die "no PRD owner sentinel found — see options above."
+  fi
+  # --root path: require root-tier sentinel to exist OR auto-bootstrap with confirmation.
+  if [ "$force_root" -eq 1 ]; then
+    if [ ! -f "$HOME/dev/.memory/.prd-owner" ]; then
+      cat >&2 <<EOF
+prd: --root requested but $HOME/dev/.memory/.prd-owner does not exist.
+     Bootstrap it first with:
+       prd init-owner --root-tier --description "root-tier registry for cross-cutting PRDs"
+EOF
+      release_lock
+      die "missing root-tier sentinel"
+    fi
+    OWNER_PATH="$HOME/dev"
+    OWNER_SCOPE="root"
+    ACTIVE_JSON="$OWNER_PATH/.memory/active-prds.json"
+    hdr_owner="$OWNER_PATH"
+  fi
+
+  cat > "$file" <<EOF
+# ${title}
+
+**Ephemeral PRD** — delete when: ${marker}
+
+- **Status:** DRAFT
+- **Created:** $(today)
+- **Trigger:** (fill in)
+- **Related:** (optional — PR / branch / Jira)
+**Branch:** ${hdr_branch}
+**Repo:** ${hdr_repo}
+**Owner_path:** ${hdr_owner}
+**Session_origin:** ${hdr_session}
+**Branch_at_creation:** ${hdr_branch}
+EOF
+  if [ -n "$parent_slug" ]; then
+    echo "**Parent:** ${parent_slug}" >> "$file"
+  fi
+  cat >> "$file" <<EOF
+
+---
+
+## 1. Context
+
+(1-3 paragraphs)
+
+## 2. Current Tasks
+
+- [ ]
+
+## 3. Subagent Log
+
+| Spawn | Name | Purpose | Result |
+|---|---|---|---|
+
+## 4. Decisions Log
+
+| Time | Decision | Rationale |
+|---|---|---|
+
+## 5. Open Items
+
+- [ ]
+
+## 6. Ephemeral Marker
+
+**Delete when:** ${marker}
+
+## 7. Revision Log
+
+| Version | Date | Change |
+|---|---|---|
+| 0.1 | $(today) | Initial draft |
+EOF
+
+  breadcrumb_add "$file" "$descriptor" "$stem"
+
+  # Spec 002 — emit HTML companion if --html was passed.
+  # Stub template — author fills via /design-prd skill in Claude Code.
+  if [ "$emit_html" -eq 1 ]; then
+    local html_file="$SCRATCH/${stem}.html"
+    local html_title="${descriptor//_/ }"
+    cat > "$html_file" <<HTML_EOF
+<!DOCTYPE html>
+<html lang="en" data-document-type="design-prd-stub" data-status="empty">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${html_title} — Design PRD (stub)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300..600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#1f2a3d; --paper:#faf6ec; --oxblood:#6b1f1f; --rule:rgba(31,42,61,0.18); }
+    body { margin:0; padding:3rem; font-family:'Newsreader',serif; color:var(--ink); background:var(--paper); }
+    .wordmark { font-size:clamp(4rem,12vw,8rem); font-weight:300; letter-spacing:0.12em; text-align:center; margin:2rem 0; line-height:0.95; }
+    .deck { font-style:italic; text-align:center; color:var(--oxblood); font-size:1.25rem; margin-bottom:3rem; }
+    .placeholder { border:1px dashed var(--rule); padding:2rem; margin:1.5rem 0; text-align:center; font-family:'JetBrains Mono',monospace; font-size:0.875rem; color:var(--ink); opacity:0.6; }
+    .meta { font-family:'JetBrains Mono',monospace; font-size:0.75rem; letter-spacing:0.18em; text-transform:uppercase; color:var(--oxblood); text-align:center; margin-bottom:2rem; }
+    footer { margin-top:4rem; border-top:1px solid var(--rule); padding-top:1.5rem; font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.15em; color:var(--ink); opacity:0.6; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="meta">scratch · $(today)</div>
+    <h1 class="wordmark">${descriptor}</h1>
+    <p class="deck">Design PRD — stub, not yet filled</p>
+  </header>
+  <main>
+    <div class="placeholder">§ 00 · TL;DR placeholder</div>
+    <div class="placeholder">§ 01 · System shape placeholder</div>
+    <div class="placeholder">§ 02 · Locked decisions placeholder</div>
+    <div class="placeholder">§ 08 · References placeholder</div>
+    <p style="text-align:center; margin:3rem 0; font-style:italic;">
+      Run <code style="font-family:'JetBrains Mono',monospace; color:var(--oxblood);">/design-prd ${descriptor}</code> in Claude Code to populate.
+    </p>
+  </main>
+  <footer>${stem}.html · companion to ${stem}.md</footer>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "${html_title} — Design PRD (stub)",
+    "identifier": "${stem}",
+    "datePublished": "$(today)",
+    "version": "0.0-stub",
+    "description": "Stub Design PRD. Not yet authored — run /design-prd to fill."
+  }
+  </script>
+</body>
+</html>
+HTML_EOF
+    echo "prd: also created $html_file"
+    echo "prd: run \`/design-prd ${descriptor}\` in Claude Code to fill the HTML"
+  fi
+
+  # If --parent supplied, append this child to the parent's ## Children section.
+  if [ -n "$parent_slug" ] && [ -n "$parent_path" ]; then
+    python3 - "$parent_path" "$stem" "$descriptor" <<'PY'
+import sys, pathlib, re
+p, child_slug, descriptor = sys.argv[1:4]
+path = pathlib.Path(p)
+text = path.read_text()
+new_row = f"- {child_slug} — {descriptor}"
+if "## Children" in text:
+    head, rest = text.split("## Children", 1)
+    lines = rest.split("\n")
+    insert_at = len(lines)
+    for i, ln in enumerate(lines):
+        if ln.startswith("## ") and i > 0:
+            insert_at = i; break
+    lines.insert(insert_at, new_row)
+    path.write_text(head + "## Children" + "\n".join(lines))
+else:
+    # Insert before "## 6. Ephemeral Marker" if present, else append at end
+    eph = re.search(r'^##\s*\d*\.?\s*Ephemeral Marker\b', text, re.M)
+    section = "\n## Children\n\n" + new_row + "\n"
+    if eph:
+        path.write_text(text[:eph.start()].rstrip() + "\n" + section + "\n" + text[eph.start():])
+    else:
+        path.write_text(text.rstrip() + "\n" + section)
+PY
+  fi
+
+  release_lock
+  echo "prd: created $file"
+  echo "prd: id=$stem"
+  [ -n "$parent_slug" ] && echo "prd: linked under parent ${parent_slug}"
+
+  # Auto-tag the new PRD so it carries repo: + any title-keyword signal from the
+  # start. Most fresh PRDs only have the scaffold body so signal is sparse — the
+  # user is expected to re-run `prd tag <id> auto` after fleshing out context.
+  local auto_tags
+  auto_tags=$(auto_tag "$file" 2>/dev/null) || auto_tags=""
+  if [ -n "$auto_tags" ]; then
+    write_tags "$file" "$auto_tags"
+    echo "prd: auto-tagged: [$auto_tags]"
+  fi
+}
+
+cmd_relate() {
+  # Canonical typed-edge linker. Writes a JSON array inside a ```json fenced
+  # code block under `## Relations` on the source PRD AND auto-mirrors the
+  # inverse edge on the target PRD.
+  #
+  # Storage format (preferred, machine-friendly):
+  #   ## Relations
+  #
+  #   ```json
+  #   [
+  #     {"type": "parent", "slug": "..."},
+  #     {"type": "blocks", "slug": "...", "reason": "..."}
+  #   ]
+  #   ```
+  #
+  # Backward compat on read: if a PRD has the legacy bullet format (`- type: slug — reason`)
+  # OR the legacy `**Parent:** <slug>` header / `## Children` section, the parser
+  # accepts those too and normalises on write.
+  #
+  #   prd relate <slug> --to <other-slug> --type <type> [--reason "<text>"] [--force]
+  # Edge types and their inverses:
+  #     parent          ↔ child
+  #     blocks          ↔ blocked-by
+  #     supersedes      ↔ superseded-by
+  #     relates-to      ↔ relates-to   (symmetric)
+  local src="" dst="" rtype="" reason="" force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to)      dst="$2"; shift 2 ;;
+      --type)    rtype="$2"; shift 2 ;;
+      --reason)  reason="$2"; shift 2 ;;
+      --force)   force=1; shift ;;
+      -*) shift ;;
+      *)  [ -z "$src" ] && src="$1"; shift ;;
+    esac
+  done
+  [ -n "$src" ]   || die "usage: prd relate <slug> --to <other-slug> --type <type>"
+  [ -n "$dst" ]   || die "usage: prd relate <slug> --to <other-slug> --type <type>"
+  [ -n "$rtype" ] || die "--type required (parent|child|blocks|blocked-by|supersedes|superseded-by|relates-to)"
+  [ "$src" = "$dst" ] && die "a PRD cannot relate to itself"
+
+  case "$rtype" in
+    parent|child|blocks|blocked-by|supersedes|superseded-by|relates-to) ;;
+    *) die "invalid --type '$rtype'. Allowed: parent, child, blocks, blocked-by, supersedes, superseded-by, relates-to" ;;
+  esac
+
+  local src_path="" dst_path=""
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -f "$tier/${src}.md" ] && src_path="$tier/${src}.md"
+    [ -f "$tier/${dst}.md" ] && dst_path="$tier/${dst}.md"
+  done
+  [ -n "$src_path" ] || die "source slug '${src}' not found in any tier"
+  [ -n "$dst_path" ] || die "target slug '${dst}' not found in any tier"
+
+  take_lock
+  python3 - "$src_path" "$dst_path" "$src" "$dst" "$rtype" "$reason" "$force" <<'PY'
+import sys, pathlib, re, json
+
+src_p, dst_p, src_slug, dst_slug, rtype, reason, force_str = sys.argv[1:8]
+force = force_str == "1"
+
+INVERSE = {
+    "parent": "child", "child": "parent",
+    "blocks": "blocked-by", "blocked-by": "blocks",
+    "supersedes": "superseded-by", "superseded-by": "supersedes",
+    "relates-to": "relates-to",
+}
+inv = INVERSE[rtype]
+
+# ---- Parsers (multi-format, machine-friendly is canonical) -----------------
+
+JSON_BLOCK = re.compile(
+    r'(^##\s+Relations\s*\n+)```json\s*\n(.*?)\n```\s*\n?',
+    re.M | re.S
+)
+BULLET_LINE = re.compile(r'^\s*-\s+([a-z][a-z\-]*)\s*:\s*([A-Za-z0-9_.\-]+)(?:\s+—\s+(.*))?\s*$')
+LEGACY_PARENT = re.compile(r'^\*\*Parent:\*\*\s*([A-Za-z0-9_.\-]+)\s*$', re.M)
+LEGACY_CHILDREN_SECTION = re.compile(r'^##\s+Children\s*\n(.+?)(?:\n##|\Z)', re.M | re.S)
+LEGACY_CHILDREN_BULLET = re.compile(r'^\s*-\s+([A-Za-z0-9_.\-]+)(?:\s+—\s+(.*))?\s*$')
+
+def read_relations(text):
+    """Return list[{type, slug, reason}] from the highest-priority source we find:
+       1. JSON inside ```json ... ``` under ## Relations  (canonical)
+       2. Bullet lines under ## Relations                  (legacy v1)
+       3. **Parent:** + ## Children                        (legacy v0)
+    """
+    rels = []
+    seen = set()  # dedup (type, slug)
+    def add(t, s, r):
+        key = (t, s)
+        if key in seen: return
+        seen.add(key)
+        rels.append({"type": t, "slug": s, "reason": (r or "").strip()})
+
+    # 1. JSON block.
+    jm = JSON_BLOCK.search(text)
+    if jm:
+        try:
+            data = json.loads(jm.group(2))
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and isinstance(item.get("type"), str) and isinstance(item.get("slug"), str):
+                        add(item["type"], item["slug"], item.get("reason", ""))
+                return rels
+        except json.JSONDecodeError:
+            pass  # fall through to bullets
+
+    # 2. Bullet under ## Relations.
+    sec = re.search(r'^##\s+Relations\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    if sec:
+        for line in sec.group(1).splitlines():
+            bm = BULLET_LINE.match(line)
+            if bm:
+                add(bm.group(1), bm.group(2), bm.group(3))
+
+    # 3. Legacy headers always merged in (so older PRDs Just Work).
+    pm = LEGACY_PARENT.search(text)
+    if pm:
+        add("parent", pm.group(1).strip(), "")
+    cs = LEGACY_CHILDREN_SECTION.search(text)
+    if cs:
+        for line in cs.group(1).splitlines():
+            cm = LEGACY_CHILDREN_BULLET.match(line)
+            if cm and not BULLET_LINE.match(line):  # don't double-count typed bullets
+                add("child", cm.group(1), cm.group(2))
+
+    return rels
+
+def write_relations(text, rels):
+    """Write the canonical JSON-block format. Removes any legacy bullet-style
+       ## Relations content. Does NOT remove legacy **Parent:** / ## Children
+       headers — those stay readable for older tooling, but `child`/`parent`
+       edges in the JSON take precedence on read."""
+    body = json.dumps(
+        [{k: v for k, v in r.items() if k == 'reason' and v or k != 'reason'} for r in rels],
+        indent=2, ensure_ascii=False,
+    )
+    block = "## Relations\n\n```json\n" + body + "\n```\n"
+
+    # Replace existing JSON-block ## Relations.
+    if JSON_BLOCK.search(text):
+        return JSON_BLOCK.sub(block + "\n", text, count=1)
+
+    # Replace existing bullet-format ## Relations (whole section).
+    sec = re.search(r'(^##\s+Relations\s*\n)(.+?)(?=\n##|\Z)', text, re.M | re.S)
+    if sec:
+        return text[:sec.start()] + block + text[sec.end():]
+
+    # No section yet — insert before ## 6. Ephemeral Marker if present, else append.
+    eph = re.search(r'^##\s*\d*\.?\s*Ephemeral Marker\b', text, re.M)
+    if eph:
+        return text[:eph.start()].rstrip() + "\n\n" + block + "\n" + text[eph.start():]
+    return text.rstrip() + "\n\n" + block
+
+def upsert(path: pathlib.Path, rt: str, target_slug: str, reason: str, force: bool):
+    text = path.read_text()
+    rels = read_relations(text)
+
+    # Existing edge of same (type, target) ?
+    existing = None
+    for r in rels:
+        if r["type"] == rt and r["slug"] == target_slug:
+            existing = r
+            break
+
+    if existing is not None:
+        if reason and existing.get("reason", "") != reason:
+            if not force: return False
+            existing["reason"] = reason
+        else:
+            return False
+    else:
+        # parent is single-valued: refuse to add a 2nd parent without --force.
+        # When --force is used, also clean the OLD parent's stale child edge.
+        if rt == "parent":
+            for r in list(rels):
+                if r["type"] == "parent" and r["slug"] != target_slug:
+                    if not force:
+                        sys.stderr.write(f"prd: '{path.stem}' already has parent '{r['slug']}'. Use --force to overwrite.\n")
+                        sys.exit(2)
+                    # Remember the old parent slug so we can clean its mirror.
+                    rels.remove(r)
+                    # Stash on a side-channel for the caller (the heredoc's
+                    # outer scope) — we can't return tuples here without
+                    # breaking the existing API, so we attach as an attr.
+                    upsert.evicted_parent = r["slug"]
+                    break
+        rels.append({"type": rt, "slug": target_slug, "reason": reason})
+
+    path.write_text(write_relations(text, rels))
+    return True
+
+upsert.evicted_parent = None  # sentinel
+
+src_path = pathlib.Path(src_p)
+dst_path = pathlib.Path(dst_p)
+
+did_src = upsert(src_path, rtype, dst_slug, reason, force)
+did_dst = upsert(dst_path, inv, src_slug, reason, force)
+
+# If --force evicted an old parent, also clean the stale child edge from THAT
+# old parent's file. Mirrors what unrelate would do, scoped to just child→src.
+if upsert.evicted_parent:
+    old_parent_slug = upsert.evicted_parent
+    # Find file across tiers.
+    base_dir = src_path.parent.parent  # PRD_ROOT
+    for tier in ("scratch", "archive", "library"):
+        cand = base_dir / tier / f"{old_parent_slug}.md"
+        if cand.exists():
+            otext = cand.read_text()
+            orels = read_relations(otext)
+            kept = [r for r in orels if not (r["type"] == "child" and r["slug"] == src_slug)]
+            if len(kept) != len(orels):
+                cand.write_text(write_relations(otext, kept))
+                sys.stderr.write(f"prd: cleaned stale child edge from old parent '{old_parent_slug}'.\n")
+            break
+
+if did_src or did_dst:
+    print(f"prd: linked {src_slug} --[{rtype}]--> {dst_slug} (mirror: {dst_slug} --[{inv}]--> {src_slug})")
+else:
+    print(f"prd: edge already present — nothing to do.")
+PY
+  local rc=$?
+  release_lock
+  return $rc
+}
+
+cmd_unrelate() {
+  # Remove a typed edge AND its inverse mirror.
+  #   prd unrelate <slug> --to <other-slug> [--type <type>]
+  # If --type is omitted, removes ALL edges between the two slugs.
+  local src="" dst="" rtype=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to)    dst="$2"; shift 2 ;;
+      --type)  rtype="$2"; shift 2 ;;
+      -*) shift ;;
+      *) [ -z "$src" ] && src="$1"; shift ;;
+    esac
+  done
+  [ -n "$src" ] || die "usage: prd unrelate <slug> --to <other-slug> [--type <type>]"
+  [ -n "$dst" ] || die "usage: prd unrelate <slug> --to <other-slug> [--type <type>]"
+
+  local src_path="" dst_path=""
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -f "$tier/${src}.md" ] && src_path="$tier/${src}.md"
+    [ -f "$tier/${dst}.md" ] && dst_path="$tier/${dst}.md"
+  done
+  [ -n "$src_path" ] || die "source slug '${src}' not found in any tier"
+  [ -n "$dst_path" ] || die "target slug '${dst}' not found in any tier"
+
+  take_lock
+  python3 - "$src_path" "$dst_path" "$src" "$dst" "$rtype" <<'PY'
+import sys, pathlib, re, json
+src_p, dst_p, src_slug, dst_slug, rtype = sys.argv[1:6]
+
+INVERSE = {
+    "parent": "child", "child": "parent",
+    "blocks": "blocked-by", "blocked-by": "blocks",
+    "supersedes": "superseded-by", "superseded-by": "supersedes",
+    "relates-to": "relates-to",
+}
+
+JSON_BLOCK = re.compile(
+    r'(^##\s+Relations\s*\n+)```json\s*\n(.*?)\n```\s*\n?',
+    re.M | re.S
+)
+BULLET_LINE = re.compile(r'^\s*-\s+([a-z][a-z\-]*)\s*:\s*([A-Za-z0-9_.\-]+)(?:\s+—\s+(.*))?\s*$')
+LEGACY_PARENT = re.compile(r'^\*\*Parent:\*\*\s*([A-Za-z0-9_.\-]+)\s*$', re.M)
+LEGACY_CHILDREN_SECTION = re.compile(r'^##\s+Children\s*\n(.+?)(?:\n##|\Z)', re.M | re.S)
+LEGACY_CHILDREN_BULLET = re.compile(r'^\s*-\s+([A-Za-z0-9_.\-]+)(?:\s+—\s+(.*))?\s*$')
+
+def read_relations(text):
+    rels = []
+    seen = set()
+    def add(t, s, r):
+        if (t, s) in seen: return
+        seen.add((t, s))
+        rels.append({"type": t, "slug": s, "reason": (r or "").strip()})
+    jm = JSON_BLOCK.search(text)
+    if jm:
+        try:
+            data = json.loads(jm.group(2))
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and isinstance(item.get("type"), str) and isinstance(item.get("slug"), str):
+                        add(item["type"], item["slug"], item.get("reason", ""))
+                return rels
+        except json.JSONDecodeError:
+            pass
+    sec = re.search(r'^##\s+Relations\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    if sec:
+        for line in sec.group(1).splitlines():
+            bm = BULLET_LINE.match(line)
+            if bm:
+                add(bm.group(1), bm.group(2), bm.group(3))
+    pm = LEGACY_PARENT.search(text)
+    if pm: add("parent", pm.group(1).strip(), "")
+    cs = LEGACY_CHILDREN_SECTION.search(text)
+    if cs:
+        for line in cs.group(1).splitlines():
+            cm = LEGACY_CHILDREN_BULLET.match(line)
+            if cm and not BULLET_LINE.match(line):
+                add("child", cm.group(1), cm.group(2))
+    return rels
+
+def write_relations(text, rels):
+    body = json.dumps(
+        [{k: v for k, v in r.items() if k == 'reason' and v or k != 'reason'} for r in rels],
+        indent=2, ensure_ascii=False,
+    )
+    block = "## Relations\n\n```json\n" + body + "\n```\n"
+    if JSON_BLOCK.search(text):
+        return JSON_BLOCK.sub(block + "\n", text, count=1)
+    sec = re.search(r'(^##\s+Relations\s*\n)(.+?)(?=\n##|\Z)', text, re.M | re.S)
+    if sec:
+        return text[:sec.start()] + block + text[sec.end():]
+    eph = re.search(r'^##\s*\d*\.?\s*Ephemeral Marker\b', text, re.M)
+    if eph:
+        return text[:eph.start()].rstrip() + "\n\n" + block + "\n" + text[eph.start():]
+    return text.rstrip() + "\n\n" + block
+
+def remove(path: pathlib.Path, target_slug: str, only_type: str):
+    text = path.read_text()
+    rels = read_relations(text)
+    keep = [r for r in rels if not (r["slug"] == target_slug and (not only_type or r["type"] == only_type))]
+    if len(keep) == len(rels): return False
+    path.write_text(write_relations(text, keep))
+    return True
+
+src_path = pathlib.Path(src_p)
+dst_path = pathlib.Path(dst_p)
+
+a = remove(src_path, dst_slug, rtype)
+inv_type = INVERSE.get(rtype, "") if rtype else ""
+b = remove(dst_path, src_slug, inv_type)
+
+if a or b:
+    typeword = f"--type {rtype} " if rtype else "(all types) "
+    print(f"prd: removed edge(s) {typeword}between {src_slug} and {dst_slug}")
+else:
+    print(f"prd: no matching edge — nothing to do.")
+PY
+  local rc=$?
+  release_lock
+  return $rc
+}
+
+cmd_link_parent() {
+  # Retroactively link two EXISTING PRDs. Mirrors `prd new --parent` mechanics.
+  #   prd link-parent <child-slug> --parent <parent-slug> [--description "<text>"] [--force]
+  # Idempotent if child already linked to the SAME parent. Refuses to overwrite
+  # a different existing parent unless --force is supplied.
+  local child_slug="" parent_slug="" descr="" force=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --parent)       parent_slug="$2"; shift 2 ;;
+      --description)  descr="$2"; shift 2 ;;
+      --force)        force=1; shift ;;
+      -*) shift ;;
+      *)  [ -z "$child_slug" ] && child_slug="$1"; shift ;;
+    esac
+  done
+  [ -n "$child_slug" ]  || die "usage: prd link-parent <child-slug> --parent <parent-slug>"
+  [ -n "$parent_slug" ] || die "usage: prd link-parent <child-slug> --parent <parent-slug>"
+
+  # Locate both files (any tier).
+  local child_path="" parent_path=""
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -f "$tier/${child_slug}.md" ]  && child_path="$tier/${child_slug}.md"
+    [ -f "$tier/${parent_slug}.md" ] && parent_path="$tier/${parent_slug}.md"
+  done
+  [ -n "$child_path" ]  || die "child slug '${child_slug}' not found in any tier"
+  [ -n "$parent_path" ] || die "parent slug '${parent_slug}' not found in any tier"
+  [ "$child_slug" = "$parent_slug" ] && die "a PRD cannot be its own parent"
+
+  # Default description = the child's title (best-effort).
+  if [ -z "$descr" ]; then
+    descr="$(grep -m1 '^# ' "$child_path" 2>/dev/null | sed 's/^#\s*//')"
+    [ -z "$descr" ] && descr="$child_slug"
+  fi
+
+  take_lock
+  python3 - "$child_path" "$parent_path" "$child_slug" "$parent_slug" "$descr" "$force" <<'PY'
+import sys, pathlib, re
+child_p, parent_p, child_slug, parent_slug, descr, force_str = sys.argv[1:7]
+force = force_str == "1"
+child_path  = pathlib.Path(child_p)
+parent_path = pathlib.Path(parent_p)
+
+ctext = child_path.read_text()
+ptext = parent_path.read_text()
+
+# 1) Update child's **Parent:** line.
+m = re.search(r'^\*\*Parent:\*\*\s*([A-Za-z0-9_.\-]+)\s*$', ctext, re.M)
+if m:
+    existing = m.group(1).strip()
+    if existing == parent_slug:
+        print(f"prd: child already linked to parent '{parent_slug}' — nothing to do.")
+        sys.exit(0)
+    if not force:
+        print(f"prd: child '{child_slug}' already has parent '{existing}'. Use --force to overwrite.", file=sys.stderr)
+        sys.exit(2)
+    ctext = re.sub(r'^\*\*Parent:\*\*.*$', f'**Parent:** {parent_slug}', ctext, count=1, flags=re.M)
+else:
+    # Insert **Parent:** line before the first `---` separator (after the
+    # status block). Falls back to inserting after `**Repo:**` if no separator
+    # is present.
+    sep = re.search(r'^---\s*$', ctext, re.M)
+    line = f'**Parent:** {parent_slug}\n'
+    if sep:
+        ctext = ctext[:sep.start()].rstrip() + '\n' + line + '\n' + ctext[sep.start():]
+    else:
+        repo = re.search(r'^\*\*Repo:\*\*.*$', ctext, re.M)
+        if repo:
+            ctext = ctext[:repo.end()] + '\n' + line.rstrip() + ctext[repo.end():]
+        else:
+            ctext = ctext.rstrip() + '\n\n' + line
+
+# 2) Append child bullet to parent's ## Children section (idempotent).
+new_row = f"- {child_slug} — {descr}"
+already_listed = any(
+    line.lstrip().startswith(f"- {child_slug} ") or line.lstrip().rstrip() == f"- {child_slug}"
+    for line in ptext.splitlines()
+)
+
+if "## Children" in ptext:
+    if not already_listed:
+        head, rest = ptext.split("## Children", 1)
+        lines = rest.split("\n")
+        insert_at = len(lines)
+        for i, ln in enumerate(lines):
+            if ln.startswith("## ") and i > 0:
+                insert_at = i; break
+        lines.insert(insert_at, new_row)
+        ptext = head + "## Children" + "\n".join(lines)
+elif not already_listed:
+    eph = re.search(r'^##\s*\d*\.?\s*Ephemeral Marker\b', ptext, re.M)
+    section = "\n## Children\n\n" + new_row + "\n"
+    if eph:
+        ptext = ptext[:eph.start()].rstrip() + "\n" + section + "\n" + ptext[eph.start():]
+    else:
+        ptext = ptext.rstrip() + "\n" + section
+
+child_path.write_text(ctext)
+parent_path.write_text(ptext)
+print(f"prd: linked '{child_slug}' under parent '{parent_slug}'")
+PY
+  local rc=$?
+  release_lock
+  return $rc
+}
+
+cmd_unlink_parent() {
+  # Remove the parent/child link both ways.
+  #   prd unlink-parent <child-slug>
+  local child_slug="$1"
+  [ -n "$child_slug" ] || die "usage: prd unlink-parent <child-slug>"
+
+  local child_path=""
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -f "$tier/${child_slug}.md" ] && child_path="$tier/${child_slug}.md"
+  done
+  [ -n "$child_path" ] || die "child slug '${child_slug}' not found in any tier"
+
+  # Read existing parent slug from child.
+  local parent_slug
+  parent_slug="$(grep -m1 '^\*\*Parent:\*\*' "$child_path" 2>/dev/null | sed -E 's/^\*\*Parent:\*\*\s*//' | tr -d '[:space:]')"
+  [ -z "$parent_slug" ] && { echo "prd: child '${child_slug}' has no parent — nothing to do."; return 0; }
+
+  local parent_path=""
+  for tier in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -f "$tier/${parent_slug}.md" ] && parent_path="$tier/${parent_slug}.md"
+  done
+
+  take_lock
+  python3 - "$child_path" "$parent_path" "$child_slug" "$parent_slug" <<'PY'
+import sys, pathlib, re
+child_p, parent_p, child_slug, parent_slug = sys.argv[1:5]
+child_path = pathlib.Path(child_p)
+
+# 1) Strip Parent line from child.
+ctext = child_path.read_text()
+ctext = re.sub(r'^\*\*Parent:\*\*.*\n?', '', ctext, count=1, flags=re.M)
+child_path.write_text(ctext)
+
+# 2) Strip the child's bullet from parent's ## Children (if parent file exists).
+if parent_p:
+    parent_path = pathlib.Path(parent_p)
+    if parent_path.exists():
+        ptext = parent_path.read_text()
+        if "## Children" in ptext:
+            head, rest = ptext.split("## Children", 1)
+            lines = rest.split("\n")
+            kept = []
+            for ln in lines:
+                stripped = ln.lstrip()
+                if stripped.startswith(f"- {child_slug} ") or stripped.rstrip() == f"- {child_slug}":
+                    continue
+                kept.append(ln)
+            parent_path.write_text(head + "## Children" + "\n".join(kept))
+
+print(f"prd: unlinked '{child_slug}' from parent '{parent_slug}'")
+PY
+  local rc=$?
+  release_lock
+  return $rc
+}
+
+cmd_orphans() {
+  # List PRDs with NO parent AND NO children (true tree orphans).
+  # By default scans scratch/ only; --all also scans archive + library.
+  local include_all=0 fmt="cards"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --all)    include_all=1; shift ;;
+      --json)   fmt="json"; shift ;;
+      --table)  fmt="table"; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  python3 - "$SCRATCH" "$ARCHIVE" "$LIBRARY" "$include_all" "$fmt" <<'PY'
+import sys, pathlib, re, json
+scratch, archive, library, include_all, fmt = sys.argv[1:6]
+include_all = include_all == "1"
+
+dirs = [pathlib.Path(scratch)]
+if include_all:
+    dirs += [pathlib.Path(archive), pathlib.Path(library)]
+
+orphans = []
+for d in dirs:
+    if not d.exists(): continue
+    for f in sorted(d.glob("*.md")):
+        if f.name in ("README.md", "INDEX.md"): continue
+        text = f.read_text(errors="replace")
+        has_parent = bool(re.search(r'^\*\*Parent:\*\*\s*\S', text, re.M))
+        ch_section = re.search(r'^##\s+Children\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+        has_children = False
+        if ch_section:
+            for line in ch_section.group(1).splitlines():
+                if re.match(r'^\s*-\s+[A-Za-z0-9_.\-]+', line):
+                    has_children = True
+                    break
+        if not has_parent and not has_children:
+            title_m = re.search(r'^#\s+(.+)$', text, re.M)
+            orphans.append({
+                "id": f.stem,
+                "tier": d.name,
+                "title": title_m.group(1).strip() if title_m else f.stem,
+                "path": str(f),
+            })
+
+if fmt == "json":
+    print(json.dumps(orphans, indent=2))
+elif fmt == "table":
+    print(f"\n{'TIER':<8}  {'ID':<48}  TITLE")
+    print("-" * 80)
+    for o in orphans:
+        print(f"{o['tier']:<8}  {o['id'][:48]:<48}  {o['title'][:30]}")
+    print(f"\n{len(orphans)} orphan(s)")
+else:
+    if not orphans:
+        print("(no orphan PRDs)")
+        sys.exit(0)
+    print(f"📭 {len(orphans)} orphan PRD{'s' if len(orphans)!=1 else ''} (no parent, no children)")
+    print("=" * 60)
+    for o in orphans:
+        print(f"  {o['id']:<50}  [{o['tier']}]  {o['title'][:30]}")
+    print()
+    print("Tip: link two of these with  prd link-parent <child> --parent <parent>")
+PY
+}
+
+cmd_list() {
+  local include_archive=0 include_library=0
+  local tag_filter=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --include-archive) include_archive=1; shift ;;
+      --include-library) include_library=1; shift ;;
+      --all) include_archive=1; include_library=1; shift ;;
+      --tag) tag_filter="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  # Tag-filter helper: returns 0 if file's tags contain tag_filter as a CSV token,
+  # 1 otherwise. Empty tag_filter always passes.
+  _tag_match() {
+    [ -z "$tag_filter" ] && return 0
+    local tags; tags=$(read_tags "$1")
+    case ",$tags," in
+      *",${tag_filter},"*) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+
+  printf "%-50s  %-8s  %-6s  %s\n" "DESCRIPTOR" "TIER" "AGE" "TAGS"
+  printf "%-50s  %-8s  %-6s  %s\n" "----------" "----" "---" "----"
+
+  for f in "$SCRATCH"/*.md; do
+    [ -e "$f" ] || continue
+    _tag_match "$f" || continue
+    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    local mark=""; [ $age -ge 14 ] && mark=" ⏸"
+    local tags; tags=$(read_tags "$f")
+    printf "%-50s  %-8s  %-6s  %s%s\n" "$(basename "$f" .md)" "scratch" "${age}d" "${tags:--}" "$mark"
+  done
+
+  if [ $include_archive -eq 1 ]; then
+    for f in "$ARCHIVE"/*.md; do
+      [ -e "$f" ] || continue
+      _tag_match "$f" || continue
+      local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+      local tags; tags=$(read_tags "$f")
+      printf "%-50s  %-8s  %-6s  %s\n" "$(basename "$f" .md)" "archive" "${age}d" "${tags:--}"
+    done
+  fi
+
+  if [ $include_library -eq 1 ]; then
+    for f in "$LIBRARY"/*.md; do
+      [ -e "$f" ] || continue
+      [ "$(basename "$f")" = "INDEX.md" ] && continue
+      [ "$(basename "$f")" = "README.md" ] && continue
+      _tag_match "$f" || continue
+      local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+      local tags; tags=$(read_tags "$f")
+      printf "%-50s  %-8s  %-6s  %s  📚\n" "$(basename "$f" .md)" "library" "${age}d" "${tags:--}"
+    done
+  fi
+}
+
+cmd_link() {
+  local query="${1:---last}"
+  local target
+  if [ "$query" = "--last" ]; then
+    target="$(ls -t "$SCRATCH"/*.md 2>/dev/null | head -1)"
+    [ -n "$target" ] || die "no scratch PRDs to link"
+  else
+    target="$(resolve_id "$query")"
+  fi
+  echo "=== $(basename "$target") ==="
+  # Print status block + first 60 lines
+  head -80 "$target"
+  echo "..."
+  echo "(full file: $target)"
+  # Auto-attach current Claude Code session
+  take_lock 2>/dev/null || true
+  auto_attach "$target" "linked / context lookup"
+  # Register in breadcrumb if orphan (PRD exists in scratch but isn't tracked anywhere).
+  # Fixes the gap where `prd link` would attach session but never put the PRD in a registry.
+  breadcrumb_add_if_orphan "$target" 2>/dev/null || true
+  release_lock 2>/dev/null || true
+}
+
+cmd_attach() {
+  local id="${1:-}"; shift || true
+  [ -n "$id" ] || die "usage: prd attach <id> [--session <uuid>] [--scope \"<text>\"]"
+  local session="" scope=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --session) session="$2"; shift 2 ;;
+      --scope) scope="$2"; shift 2 ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+  local file; file="$(resolve_id "$id")"
+  if [ -z "$session" ]; then
+    session="$(detect_session_uuid)"
+    [ -n "$session" ] || die "could not detect current session UUID; pass --session <uuid>"
+  fi
+  take_lock
+  attach_session "$file" "$session" "$scope"
+  release_lock
+  echo "prd: attached session $session to $(basename "$file")"
+}
+
+cmd_log() {
+  local id="${1:-}" kind="${2:-}"; shift 2 || true
+  [ -n "$id" ] && [ -n "$kind" ] || die "usage: prd log <id> {subagent|decision} ..."
+  local file; file="$(resolve_id "$id")"
+  take_lock
+
+  case "$kind" in
+    subagent)
+      local entry="${1:-}"
+      [ -n "$entry" ] || die "usage: prd log <id> subagent <name>=\"<purpose>\""
+      local result="${2:-pending}"
+      local ts="$(now_iso)"
+      local name="${entry%%=*}"
+      local purpose="${entry#*=}"
+      purpose="${purpose%\"}"; purpose="${purpose#\"}"
+      # Append a row to the Subagent Log table
+      python3 - "$file" "$ts" "$name" "$purpose" "$result" <<'PY'
+import sys, pathlib
+p, ts, name, purpose, result = sys.argv[1:6]
+text = pathlib.Path(p).read_text()
+marker = "## 3. Subagent Log"
+if marker not in text:
+    sys.exit(0)
+head, rest = text.split(marker, 1)
+# Find the end of the table (blank line after marker)
+lines = rest.split("\n")
+# Find last table row then insert
+insert_at = 0
+for i, ln in enumerate(lines):
+    if ln.startswith("## "):
+        insert_at = i
+        break
+else:
+    insert_at = len(lines)
+new_row = f"| {ts} | {name} | {purpose} | {result} |"
+lines.insert(insert_at, new_row)
+pathlib.Path(p).write_text(head + marker + "\n".join(lines))
+PY
+      ;;
+    note)
+      local note_text="${1:-}"
+      [ -n "$note_text" ] || die "usage: prd log <id> note \"<text>\""
+      python3 - "$file" "$(now_iso)" "$note_text" <<'PY'
+import sys, pathlib, re
+p, ts, note = sys.argv[1:4]
+path = pathlib.Path(p)
+text = path.read_text()
+block = f"\n## Note: {ts}\n\n{note}\n"
+# Insert before "## Ephemeral Marker" / "## X. Ephemeral Marker" if present, else append.
+eph = re.search(r'^##\s*\d*\.?\s*Ephemeral Marker\b', text, re.M)
+if eph:
+    new_text = text[:eph.start()].rstrip() + "\n" + block + "\n" + text[eph.start():]
+else:
+    new_text = text.rstrip() + "\n" + block
+path.write_text(new_text)
+PY
+      ;;
+    decision)
+      local text="${1:-}"
+      [ -n "$text" ] || die "usage: prd log <id> decision \"<text>\""
+      python3 - "$file" "$(now_iso)" "$text" <<'PY'
+import sys, pathlib
+p, ts, text = sys.argv[1:4]
+content = pathlib.Path(p).read_text()
+marker = "## 4. Decisions Log"
+if marker not in content:
+    sys.exit(0)
+head, rest = content.split(marker, 1)
+lines = rest.split("\n")
+insert_at = len(lines)
+for i, ln in enumerate(lines):
+    if ln.startswith("## "):
+        insert_at = i
+        break
+new_row = f"| {ts} | {text} | |"
+lines.insert(insert_at, new_row)
+pathlib.Path(p).write_text(head + marker + "\n".join(lines))
+PY
+      ;;
+    *) die "unknown log kind: $kind" ;;
+  esac
+  auto_attach "$file" "logged $kind"
+  release_lock
+  echo "prd: logged $kind to $(basename "$file")"
+}
+
+cmd_diary() {
+  local id="${1:-}" action="${2:-}"; shift 2 || true
+  [ -n "$id" ] && [ -n "$action" ] || die "usage: prd diary <id> {open|close|append} ..."
+  local file; file="$(resolve_id "$id")"
+  take_lock
+
+  case "$action" in
+    open)
+      local focus=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --focus) focus="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      local uuid; uuid="$(detect_session_uuid)"
+      python3 - "$file" "$(now_iso)" "${uuid:-unknown}" "$focus" <<'PY'
+import sys, pathlib, re
+p, ts, uuid, focus = sys.argv[1:5]
+path = pathlib.Path(p); text = path.read_text()
+date = ts.split("T")[0]; hhmm = ts.split("T")[1][:5]
+short = uuid[:8] if uuid != "unknown" else "unknown"
+diary_marker = "## 10. Dev Diary"
+# Idempotent — if THIS uuid already has an OPEN entry, no-op
+if diary_marker in text:
+    section = text.split(diary_marker, 1)[1]
+    for block in section.split("### Session ")[1:]:
+        if short in block.split("\n", 1)[0] and "OPEN since" in block.split("\n", 1)[0]:
+            sys.exit(0)
+entry = (f"\n### Session {date} — `{short}` — OPEN since {hhmm} UTC\n"
+         f"**Focus:** {focus or '<TBD>'}\n\n"
+         f"**Done**\n\n"
+         f"**Discussed / Decided**\n\n"
+         f"**Escalations**\n\n"
+         f"**Next pickup:** <TBD>\n")
+if diary_marker in text:
+    new = text.rstrip() + "\n" + entry
+else:
+    new = text.rstrip() + f"\n\n{diary_marker}\n{entry}"
+path.write_text(new)
+PY
+      ;;
+    close)
+      local pickup=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --pickup) pickup="$2"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      python3 - "$file" "$(now_iso)" "$pickup" <<'PY'
+import sys, pathlib, re
+from datetime import datetime
+p, ts, pickup = sys.argv[1:4]
+path = pathlib.Path(p); text = path.read_text()
+pat = re.compile(r'^### Session (\d{4}-\d{2}-\d{2}) — (`[^`]+`) — OPEN since (\d{2}:\d{2}) UTC\s*$', re.M)
+matches = list(pat.finditer(text))
+if not matches:
+    print("prd: no open diary entry to close", file=sys.stderr); sys.exit(0)
+last = matches[-1]
+date, uuid, opened = last.groups()
+closed = ts.split("T")[1][:5]
+o = datetime.strptime(f"{date} {opened}", "%Y-%m-%d %H:%M")
+c = datetime.strptime(f"{date} {closed}", "%Y-%m-%d %H:%M")
+secs = max(0, int((c - o).total_seconds()))
+hours, rem = divmod(secs, 3600); minutes = rem // 60
+dur = f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
+new_header = f"### Session {date} — {uuid} — {opened}→{closed} UTC ({dur})"
+text = text[:last.start()] + new_header + text[last.end():]
+if pickup:
+    block_start = last.start()
+    nxt = re.search(r'^### Session ', text[last.end():], re.M)
+    block_end = last.end() + nxt.start() if nxt else len(text)
+    block = text[block_start:block_end]
+    if "**Next pickup:** <TBD>" in block:
+        block = block.replace("**Next pickup:** <TBD>", f"**Next pickup:** {pickup}")
+    text = text[:block_start] + block + text[block_end:]
+path.write_text(text)
+PY
+      ;;
+    append)
+      local sub="" content=""
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --done) sub="Done"; shift ;;
+          --discussed) sub="Discussed / Decided"; shift ;;
+          --escalation) sub="Escalations"; shift ;;
+          --pickup) sub="pickup"; shift ;;
+          *) content="$1"; shift ;;
+        esac
+      done
+      [ -n "$content" ] || die "usage: prd diary <id> append [--done|--discussed|--escalation|--pickup] \"<text>\""
+      [ -n "$sub" ] || sub="Done"
+      python3 - "$file" "$sub" "$content" <<'PY'
+import sys, pathlib, re
+p, sub, content = sys.argv[1:4]
+path = pathlib.Path(p); text = path.read_text()
+pat = re.compile(r'^### Session [^\n]+\n', re.M)
+matches = list(pat.finditer(text))
+if not matches:
+    print("prd: no diary entry — call 'prd diary <id> open' first", file=sys.stderr); sys.exit(1)
+last = matches[-1]
+bs = last.start()
+nxt = re.search(r'^### Session ', text[last.end():], re.M)
+be = last.end() + nxt.start() if nxt else len(text)
+block = text[bs:be]
+if sub == "pickup":
+    if "**Next pickup:**" in block:
+        block = re.sub(r'\*\*Next pickup:\*\*[^\n]*', f"**Next pickup:** {content}", block)
+    else:
+        block = block.rstrip() + f"\n**Next pickup:** {content}\n"
+else:
+    marker = f"**{sub}**"
+    if marker not in block:
+        # Insert subsection before Next pickup if present, else at end
+        if "**Next pickup:**" in block:
+            i = block.find("**Next pickup:**")
+            block = block[:i] + f"{marker}\n- {content}\n\n" + block[i:]
+        else:
+            block = block.rstrip() + f"\n\n{marker}\n- {content}\n"
+    else:
+        # Append bullet to existing subsection
+        i = block.find(marker) + len(marker)
+        rest = block[i:]
+        nm = re.search(r'^\*\*[^*\n]+\*\*', rest, re.M)
+        se = i + nm.start() if nm else len(block)
+        section_body = block[i:se].rstrip("\n")
+        new_body = section_body + f"\n- {content}"
+        block = block[:i] + new_body + "\n\n" + block[se:].lstrip("\n")
+text = text[:bs] + block + text[be:]
+path.write_text(text)
+PY
+      ;;
+    *) die "unknown diary action: $action (try open|close|append)" ;;
+  esac
+  auto_attach "$file" "diary $action"
+  release_lock
+  echo "prd: diary $action -> $(basename "$file")"
+}
+
+cmd_resolve() {
+  local id="${1:-}"; shift || true
+  [ -n "$id" ] || die "usage: prd resolve <id> [--reason \"...\"]"
+  local reason=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) reason="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  local file; file="$(resolve_id "$id")"
+  case "$file" in
+    "$SCRATCH/"*) : ;;
+    *) die "only scratch PRDs can be resolved (got $file)" ;;
+  esac
+
+  if [ -z "$reason" ]; then
+    if [ -t 0 ]; then
+      echo "prd: one sentence — why are you closing this PRD?"
+      read -r reason
+    else
+      die "non-interactive: pass --reason \"<one sentence>\""
+    fi
+  fi
+  [ -n "$reason" ] || die "reason is required"
+
+  take_lock
+
+  # Compute significance score
+  local score
+  score=$(python3 - "$file" <<'PY'
+import sys, pathlib, re
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+
+# Architectural keywords
+arch = re.findall(r'\b(design|architecture|schema|hook|rule|constitution|pipeline|refactor)\b', text, re.I)
+arch_score = min(len(arch) * 5, 30)
+
+# Subagent rows — count non-empty Subagent Log table rows
+sub_section = text.split("## 3. Subagent Log", 1)[1].split("## ", 1)[0] if "## 3. Subagent Log" in text else ""
+sub_rows = [l for l in sub_section.splitlines() if l.startswith("|") and not l.startswith("|---") and not l.startswith("| Spawn")]
+sub_rows = [l for l in sub_rows if l.strip("| ").strip()]
+sub_score = min(len(sub_rows) * 5, 20)
+
+# Decisions — non-empty Decisions Log rows
+dec_section = text.split("## 4. Decisions Log", 1)[1].split("## ", 1)[0] if "## 4. Decisions Log" in text else ""
+dec_rows = [l for l in dec_section.splitlines() if l.startswith("|") and not l.startswith("|---") and not l.startswith("| Time")]
+dec_rows = [l for l in dec_rows if l.strip("| ").strip()]
+dec_score = min(len(dec_rows) * 3, 20)
+
+# File length
+flen = len(text)
+len_score = 15 if flen >= 15000 else (10 if flen >= 8000 else 0)
+
+total = arch_score + sub_score + dec_score + len_score
+print(total)
+PY
+)
+
+  # Append Resolution Summary
+  python3 - "$file" "$(today)" "$reason" "$score" <<'PY'
+import sys, pathlib
+p, date, reason, score = sys.argv[1:5]
+text = pathlib.Path(p).read_text()
+summary = f"""
+
+---
+
+## Resolution — {date}
+
+**User statement:** {reason}
+
+**Outcome:** (synthesis — fill from Decisions/Subagent logs)
+
+**What worked:**
+- (bullet)
+
+**What didn't (honest):**
+- (bullet — include at least one failure mode)
+
+**Decisions that survive:**
+- (bullet — candidates for library graduation)
+
+**Significance score:** {score} / 100
+
+**Graduate?** (y/N)
+"""
+pathlib.Path(p).write_text(text + summary)
+PY
+
+  # Move to archive
+  local archived="$ARCHIVE/$(basename "$file")"
+  mv "$file" "$archived"
+  breadcrumb_update_path "$file" "$archived"
+
+  # Spec 002 — move companion files (HTML / PDF / PPTX / IPYNB) alongside.
+  move_companions "$file" "$ARCHIVE" || die "companion move failed; PRD .md is now in archive but companions may be in inconsistent state"
+
+  auto_attach "$archived" "resolved${reason:+: $reason}"
+
+  release_lock
+
+  echo "prd: resolved $(basename "$file") → archive/ (significance=$score)"
+
+  if [ "$score" -ge 60 ]; then
+    echo ""
+    echo "prd: significance=$score is foundational. Graduate to library? [y/N]"
+    if [ -t 0 ]; then
+      local resp
+      read -r resp
+      if [ "$resp" = "y" ] || [ "$resp" = "Y" ]; then
+        cmd_graduate "$(basename "$archived" .md)"
+      fi
+    else
+      echo "prd: non-interactive — run 'prd graduate $(basename "$archived" .md)' to promote"
+    fi
+  fi
+}
+
+cmd_graduate() {
+  local id="${1:-}"; shift || true
+  [ -n "$id" ] || die "usage: prd graduate <id> [--tags \"t1,t2\"]"
+  local tags=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tags) tags="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  local file; file="$(resolve_id "$id")"
+  case "$file" in
+    "$ARCHIVE/"*) : ;;
+    *) die "only archived PRDs can be graduated (got $file). Run 'prd resolve' first." ;;
+  esac
+
+  grep -q "^## Resolution" "$file" || die "PRD has no Resolution Summary — resolve first"
+
+  if [ -z "$tags" ] && [ -t 0 ]; then
+    echo "prd: tags for this graduation (comma-separated, optional):"
+    read -r tags
+  fi
+
+  if [ -t 0 ]; then
+    echo "prd: confirm graduation of $(basename "$file") to library? (y/N)"
+    local resp; read -r resp
+    [ "$resp" = "y" ] || [ "$resp" = "Y" ] || { echo "aborted"; exit 0; }
+  fi
+
+  take_lock
+
+  # Compute next L-id
+  local lid
+  lid=$(ls "$LIBRARY"/L*_*.md 2>/dev/null | sed -n 's#.*/L\([0-9]\+\)_.*#\1#p' | sort -n | tail -1)
+  # force base-10: `printf %03d` zero-pads to L007 etc., which bash $((  ))
+  # would otherwise parse as octal — fails on L008 with "value too great for
+  # base" (2026-05-12 fix while graduating hhdev_production_convergence_2026-05-10).
+  lid=$(( 10#${lid:-0} + 1 ))
+  local lid_str=$(printf "L%03d" $lid)
+
+  local slug="$(basename "$file" .md)"
+  local dest="$LIBRARY/${lid_str}_${slug}.md"
+
+  # Prepend frontmatter
+  python3 - "$file" "$dest" "$lid_str" "$slug" "$(today)" "$tags" <<'PY'
+import sys, pathlib
+src, dst, lid, slug, date, tags = sys.argv[1:7]
+body = pathlib.Path(src).read_text()
+tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+fm = f"""---
+id: {lid}
+title: {slug.replace("_", " ")}
+graduated: {date}
+tags: [{", ".join(tag_list)}]
+source_path: archive/{slug}.md
+revisions: 1
+---
+
+"""
+pathlib.Path(dst).write_text(fm + body)
+PY
+
+  # Spec 002 — copy any companions (HTML / PDF / PPTX / IPYNB) to library with new lid prefix.
+  # graduate WRITES a new prefixed file (unlike resolve which moves) so we COPY here, not move.
+  # The archive copy is left in place per graduate's existing pattern.
+  for cext in html pdf pptx ipynb; do
+    arc_comp="$ARCHIVE/${slug}.${cext}"
+    if [ -e "$arc_comp" ]; then
+      cp "$arc_comp" "$LIBRARY/${lid_str}_${slug}.${cext}"
+      echo "prd: copied companion → ${lid_str}_${slug}.${cext}" >&2
+    fi
+  done
+
+  # Regenerate INDEX.md
+  python3 - "$LIBRARY" <<'PY'
+import pathlib, re, sys
+lib = pathlib.Path(sys.argv[1])
+entries = []
+for p in sorted(lib.glob("L*_*.md")):
+    text = p.read_text()
+    m = re.match(r'---\n(.*?)\n---', text, re.S)
+    if not m: continue
+    meta = {}
+    for line in m.group(1).splitlines():
+        if ':' in line:
+            k, v = line.split(':', 1)
+            meta[k.strip()] = v.strip()
+    entries.append({
+        "id": meta.get("id", "?"),
+        "title": meta.get("title", p.stem),
+        "graduated": meta.get("graduated", "?"),
+        "tags": meta.get("tags", "[]"),
+        "revisions": meta.get("revisions", "1"),
+        "file": p.name,
+    })
+lines = [
+    "# PRD Library — Index",
+    "",
+    "*Auto-generated from frontmatter. Do not hand-edit.*",
+    "",
+    "| ID | Title | Graduated | Tags | Revisions | File |",
+    "|---|---|---|---|---|---|",
+]
+for e in entries:
+    lines.append(f"| {e['id']} | {e['title']} | {e['graduated']} | {e['tags']} | {e['revisions']} | [{e['file']}]({e['file']}) |")
+if not entries:
+    lines.append("| _(empty)_ | | | | | |")
+(lib / "INDEX.md").write_text("\n".join(lines) + "\n")
+PY
+
+  # Commit in library git
+  git -C "$LIBRARY" add -A
+  git -C "$LIBRARY" commit -q -m "graduate: ${slug}"
+
+  # Remove from open-items breadcrumb
+  breadcrumb_remove "$file"
+
+  auto_attach "$dest" "graduated${tags:+ — tags=$tags}"
+
+  release_lock
+
+  echo "prd: graduated → $dest"
+  echo "prd: INDEX.md regenerated and committed"
+}
+
+cmd_revision() {
+  local id="${1:-}"; local reason="${2:-}"
+  [ -n "$id" ] && [ -n "$reason" ] || die "usage: prd revision <id> \"<reason>\""
+
+  local file; file="$(resolve_id "$id")"
+  case "$file" in
+    "$LIBRARY/"*) : ;;
+    *) die "only library PRDs use revision (got $file)" ;;
+  esac
+
+  take_lock
+
+  "${EDITOR:-nano}" "$file"
+
+  # Bump revisions count + append to Revision Log
+  python3 - "$file" "$(today)" "$reason" <<'PY'
+import sys, pathlib, re
+p, date, reason = sys.argv[1:4]
+text = pathlib.Path(p).read_text()
+# Bump revisions in frontmatter
+def bump_rev(m):
+    n = int(m.group(1)) + 1
+    return f"revisions: {n}"
+text = re.sub(r'revisions:\s*(\d+)', bump_rev, text, count=1)
+# Append revision log entry
+marker = "## 7. Revision Log"
+if marker in text:
+    lines = text.split(marker, 1)[1].splitlines()
+    insert_at = len(lines)
+    for i, ln in enumerate(lines):
+        if ln.startswith("## ") and i > 2:
+            insert_at = i
+            break
+    # Find last table row and bump version
+    rev_match = re.findall(r'^\|\s*(\d+\.\d+)\s*\|', text, re.M)
+    last_v = rev_match[-1] if rev_match else "0.1"
+    major, minor = last_v.split(".")
+    new_v = f"{major}.{int(minor)+1}"
+    new_row = f"| {new_v} | {date} | {reason} |"
+    head = text.split(marker, 1)[0]
+    lines.insert(insert_at, new_row)
+    pathlib.Path(p).write_text(head + marker + "\n".join(lines))
+PY
+
+  # Regenerate INDEX
+  python3 - "$LIBRARY" <<'PY'
+# (same as graduate — keep in sync; dedup later)
+import pathlib, re, sys
+lib = pathlib.Path(sys.argv[1])
+entries = []
+for p in sorted(lib.glob("L*_*.md")):
+    text = p.read_text()
+    m = re.match(r'---\n(.*?)\n---', text, re.S)
+    if not m: continue
+    meta = {}
+    for line in m.group(1).splitlines():
+        if ':' in line:
+            k, v = line.split(':', 1)
+            meta[k.strip()] = v.strip()
+    entries.append({
+        "id": meta.get("id", "?"),
+        "title": meta.get("title", p.stem),
+        "graduated": meta.get("graduated", "?"),
+        "tags": meta.get("tags", "[]"),
+        "revisions": meta.get("revisions", "1"),
+        "file": p.name,
+    })
+lines = [
+    "# PRD Library — Index", "",
+    "*Auto-generated from frontmatter. Do not hand-edit.*", "",
+    "| ID | Title | Graduated | Tags | Revisions | File |",
+    "|---|---|---|---|---|---|",
+]
+for e in entries:
+    lines.append(f"| {e['id']} | {e['title']} | {e['graduated']} | {e['tags']} | {e['revisions']} | [{e['file']}]({e['file']}) |")
+if not entries:
+    lines.append("| _(empty)_ | | | | | |")
+(lib / "INDEX.md").write_text("\n".join(lines) + "\n")
+PY
+
+  git -C "$LIBRARY" add -A
+  git -C "$LIBRARY" commit -q -m "revise: $(basename "$file" .md) — ${reason}"
+
+  auto_attach "$file" "revised: $reason"
+
+  release_lock
+  echo "prd: revised $(basename "$file") — $reason"
+}
+
+cmd_reopen() {
+  local id="${1:-}"
+  [ -n "$id" ] || die "usage: prd reopen <id>"
+  local file; file="$(resolve_id "$id")"
+  case "$file" in
+    "$ARCHIVE/"*) : ;;
+    *) die "only archived PRDs can be reopened (got $file)" ;;
+  esac
+
+  take_lock
+  local dest="$SCRATCH/$(basename "$file")"
+  mv "$file" "$dest"
+
+  # Spec 002 — move companion files (HTML / PDF / PPTX / IPYNB) alongside.
+  move_companions "$file" "$SCRATCH" || die "companion move failed during reopen"
+
+  python3 - "$dest" "$(today)" <<'PY'
+import sys, pathlib
+p, date = sys.argv[1:3]
+text = pathlib.Path(p).read_text()
+marker = "## 7. Revision Log"
+if marker in text:
+    lines = text.split(marker, 1)[1].splitlines()
+    insert_at = len(lines)
+    for i, ln in enumerate(lines):
+        if ln.startswith("## ") and i > 2:
+            insert_at = i; break
+    rev_match = __import__('re').findall(r'^\|\s*(\d+\.\d+)\s*\|', text, __import__('re').M)
+    last_v = rev_match[-1] if rev_match else "0.1"
+    major, minor = last_v.split(".")
+    new_v = f"{major}.{int(minor)+1}"
+    new_row = f"| {new_v} | {date} | Reopened from archive |"
+    head = text.split(marker, 1)[0]
+    lines.insert(insert_at, new_row)
+    pathlib.Path(p).write_text(head + marker + "\n".join(lines))
+PY
+  breadcrumb_update_path "$file" "$dest"
+
+  auto_attach "$dest" "reopened from archive"
+
+  release_lock
+  echo "prd: reopened → $dest"
+}
+
+cmd_find() {
+  # Usage: prd find [--branch <b>] [--repo <r>]
+  # Defaults to current git branch/repo. Prints "<slug>\t<mtime_epoch>" for the
+  # most-recently-modified scratch PRD that matches; empty stdout if no match.
+  local branch="" repo=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --branch) branch="$2"; shift 2 ;;
+      --repo)   repo="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [ -n "$branch" ] || branch="$(detect_git_branch)"
+  [ -n "$repo" ]   || repo="$(detect_git_repo)"
+  local cand; cand="$(find_candidate_parent "$branch" "$repo")"
+  [ -n "$cand" ] || return 0
+  local slug; slug="$(basename "$cand" .md)"
+  local mt; mt="$(stat -c %Y "$cand")"
+  printf '%s\t%s\n' "$slug" "$mt"
+}
+
+cmd_sweep() {
+  # --retag mode: auto-tag every scratch + archive PRD (library is immutable)
+  if [ "${1:-}" = "--retag" ]; then
+    local retagged=0 unchanged=0 total_tags=0
+    for tier in "$SCRATCH" "$ARCHIVE"; do
+      for f in "$tier"/*.md; do
+        [ -e "$f" ] || continue
+        local before after
+        before=$(read_tags "$f")
+        after=$(auto_tag "$f")
+        if [ "$before" != "$after" ]; then
+          write_tags "$f" "$after"
+          retagged=$(( retagged + 1 ))
+          # Count comma-separated tokens (0 if empty)
+          local n
+          n=$(echo -n "$after" | awk -F, 'NF{print NF; exit} END{if (NR==0) print 0}')
+          total_tags=$(( total_tags + ${n:-0} ))
+          echo "  ⊕ $(basename "$f"): [$after]"
+        else
+          unchanged=$(( unchanged + 1 ))
+        fi
+      done
+    done
+    echo ""
+    echo "prd sweep --retag: $retagged updated  /  $unchanged unchanged  /  $total_tags tags total"
+    return 0
+  fi
+
+  local stale_count=0 very_old_count=0
+  for f in "$SCRATCH"/*.md; do
+    [ -e "$f" ] || continue
+    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    if [ $age -ge 14 ] && ! grep -q "^## Resolution" "$f"; then
+      echo "⏸ stale ${age}d  $(basename "$f")"
+      stale_count=$(( stale_count + 1 ))
+    fi
+  done
+  for f in "$ARCHIVE"/*.md; do
+    [ -e "$f" ] || continue
+    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    if [ $age -ge 30 ]; then
+      echo "🗑 old  ${age}d  $(basename "$f") (archive — consider delete or graduate)"
+      very_old_count=$(( very_old_count + 1 ))
+    fi
+  done
+  echo ""
+  echo "prd sweep: $stale_count stale scratch / $very_old_count old archive"
+  echo "prd sweep: nothing auto-deleted. Run 'prd resolve <id>' or manual rm."
+}
+
+cmd_init_owner() {
+  # Create a `.memory/.prd-owner` sentinel marking this directory as a legitimate PRD scope.
+  # See PRD prd_active_registry_cross_contamination_2026-05-15 §8 Rank-1 / §9 Step R4.
+  local scope="project" description="" root_tier=0 target_dir=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope) scope="$2"; shift 2 ;;
+      --description) description="$2"; shift 2 ;;
+      --root-tier) root_tier=1; scope="root"; shift ;;
+      --dir) target_dir="$2"; shift 2 ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+  if [ "$root_tier" -eq 1 ]; then
+    target_dir="$HOME/dev"
+  fi
+  [ -n "$target_dir" ] || target_dir="$(pwd)"
+  [ -n "$description" ] || die "--description required (one-line summary of this scope)"
+  case "$scope" in
+    project|root) ;;
+    *) die "scope must be 'project' or 'root' (got: $scope)" ;;
+  esac
+  local mem="$target_dir/.memory"
+  local sentinel="$mem/.prd-owner"
+  mkdir -p "$mem"
+  if [ -f "$sentinel" ]; then
+    echo "prd: sentinel already exists at $sentinel" >&2
+    cat "$sentinel" >&2
+    return 0
+  fi
+  cat > "$sentinel" <<EOF
+scope=$scope
+created=$(today)
+description=$description
+EOF
+  # Ensure active-prds.json exists (canonical empty registry)
+  if [ ! -f "$mem/active-prds.json" ]; then
+    echo '{"active":[]}' > "$mem/active-prds.json"
+  fi
+  echo "prd: bootstrapped $scope-scope PRD owner at $target_dir"
+  echo "  sentinel: $sentinel"
+  echo "  registry: $mem/active-prds.json"
+}
+
+cmd_context() {
+  # Layer-4 context surface — shows agent + user where prd writes will land.
+  local branch repo session active_path active_owner active_branch match
+  branch="$(detect_git_branch 2>/dev/null || echo '<none>')"
+  repo="$(detect_git_repo 2>/dev/null || echo '<none>')"
+  session="${CLAUDE_SESSION_ID:-${SESSION_ID:-<unset>}}"
+  echo "─── prd context ───"
+  echo "  cwd:           $(pwd)"
+  echo "  branch:        $branch"
+  echo "  repo:          $repo"
+  echo "  session:       $session"
+  echo "  owner_path:    ${OWNER_PATH:-<unresolved>}"
+  echo "  ACTIVE_JSON:   $ACTIVE_JSON"
+  if [ -f "$ACTIVE_JSON" ]; then
+    active_path="$(jq -r '(.active // [])[0].path // empty' "$ACTIVE_JSON" 2>/dev/null)"
+    if [ -n "$active_path" ] && [ -f "$active_path" ]; then
+      active_owner="$(grep -m1 -E '^\*\*Owner_path:\*\*' "$active_path" 2>/dev/null | sed -E 's/^\*\*Owner_path:\*\*[[:space:]]*//' | tr -d '\r')"
+      active_branch="$(grep -m1 -E '^\*\*Branch_at_creation:\*\*' "$active_path" 2>/dev/null | sed -E 's/^\*\*Branch_at_creation:\*\*[[:space:]]*//' | tr -d '\r')"
+      echo "  active PRD:    $(basename "$active_path" .md)"
+      echo "    declared owner_path: ${active_owner:-<none in frontmatter>}"
+      echo "    declared branch:     ${active_branch:-<none in frontmatter>}"
+      if [ -n "$active_owner" ] && [ -n "$OWNER_PATH" ]; then
+        if [ "$active_owner" = "$OWNER_PATH" ]; then
+          match="✓ owner matches cwd-resolved owner"
+        else
+          match="⚠ MISMATCH — PRD anchor ($active_owner) ≠ cwd-resolved ($OWNER_PATH). Hook will skip cadence logs."
+        fi
+      else
+        match="(no declared owner — pre-anchor-era PRD)"
+      fi
+      echo "    match:        $match"
+    else
+      echo "  active PRD:    (none registered)"
+    fi
+  else
+    echo "  active PRD:    (no registry file at $ACTIVE_JSON)"
+  fi
+  echo "───────────────────"
+}
+
+cmd_doctor() {
+  echo "=== prd doctor ==="
+  echo ""
+  echo "Paths:"
+  echo "  scratch: $SCRATCH ($(ls "$SCRATCH"/*.md 2>/dev/null | wc -l) files)"
+  echo "  archive: $ARCHIVE ($(ls "$ARCHIVE"/*.md 2>/dev/null | wc -l) files)"
+  echo "  library: $LIBRARY ($(ls "$LIBRARY"/L*.md 2>/dev/null | wc -l) files)"
+  echo "  breadcrumb: $ACTIVE_JSON"
+  echo ""
+
+  # Sync check: active-prds vs scratch
+  if [ -f "$ACTIVE_JSON" ]; then
+    local tracked untracked
+    tracked=$(python3 -c "import json; d=json.load(open('$ACTIVE_JSON')); print(len(d.get('active',[])))" 2>/dev/null || echo "?")
+    local scratch_count=$(ls "$SCRATCH"/*.md 2>/dev/null | wc -l)
+    echo "Breadcrumb tracks $tracked PRDs; $scratch_count in scratch."
+    if [ "$tracked" -lt "$scratch_count" ]; then
+      echo "  ⚠️  $((scratch_count - tracked)) untracked scratch PRDs (likely pre-dated /prd new)"
+    fi
+  fi
+  echo ""
+
+  # Ephemeral marker compliance
+  local missing=0
+  for f in "$SCRATCH"/*.md; do
+    [ -e "$f" ] || continue
+    grep -q "^**Delete when:**\|^\*\*Delete when:\*\*\|^## 6\. Ephemeral Marker" "$f" || missing=$((missing+1))
+  done
+  echo "Ephemeral marker compliance: $((scratch_count - missing))/$scratch_count"
+  echo ""
+
+  # Stale lock
+  if [ -f "$LOCK" ]; then
+    local lpid=$(cat "$LOCK")
+    if ! kill -0 "$lpid" 2>/dev/null; then
+      echo "⚠️  Stale skill lock at $LOCK (pid=$lpid no longer alive) — clearing"
+      rm -f "$LOCK"
+    else
+      echo "🔒 Skill lock active (pid=$lpid)"
+    fi
+  fi
+  echo ""
+
+  # Hook presence
+  if [ -x "$HOME/.claude/hooks/prd-guard/prd-guard.sh" ]; then
+    echo "✅ prd-guard hook present + executable"
+    local violations=$(wc -l < "$HOME/.claude/hooks/prd-guard/violations.log" 2>/dev/null || echo 0)
+    echo "   violations log: $violations entries"
+  else
+    echo "❌ prd-guard hook MISSING or not executable"
+  fi
+
+  # Library git status
+  if [ -d "$LIBRARY/.git" ]; then
+    local clean=$(git -C "$LIBRARY" status --porcelain | wc -l)
+    if [ "$clean" -eq 0 ]; then
+      echo "✅ library/ git clean"
+    else
+      echo "⚠️  library/ has $clean uncommitted changes"
+    fi
+  fi
+
+  # Spec 002 — paired-name companion check.
+  # For every companion file (.html, .pdf, .pptx, .ipynb) in any tier,
+  # verify a matching .md with the same base descriptor + date exists.
+  # Reports violations + suggested rename. NEVER auto-renames (read-only contract).
+  echo ""
+  echo "=== Paired-name companion check (Spec 002) ==="
+  local total_companions=0
+  local total_orphans=0
+  for tier_dir in "$SCRATCH" "$ARCHIVE" "$LIBRARY"; do
+    [ -d "$tier_dir" ] || continue
+    for cext in html pdf pptx ipynb; do
+      for html_file in "$tier_dir"/*."$cext"; do
+        [ -e "$html_file" ] || continue
+        total_companions=$((total_companions + 1))
+        local stem=$(basename "$html_file" ."$cext")
+        local md_sibling="$tier_dir/$stem.md"
+        if [ ! -e "$md_sibling" ]; then
+          total_orphans=$((total_orphans + 1))
+          echo "  ⚠️  Orphan: $(basename "$html_file")"
+          echo "     in: $tier_dir"
+          # Try to suggest a rename based on near-match MD files
+          local candidate=""
+          local base_words=$(echo "$stem" | tr '_' ' ')
+          for md_file in "$tier_dir"/*.md; do
+            [ -e "$md_file" ] || continue
+            local md_stem=$(basename "$md_file" .md)
+            # Cheap match: any 2 of the first 3 underscore-separated tokens match
+            local hits=0
+            local i=0
+            for tok in $base_words; do
+              i=$((i + 1))
+              [ "$i" -gt 3 ] && break
+              echo "$md_stem" | grep -q "$tok" && hits=$((hits + 1))
+            done
+            if [ "$hits" -ge 2 ]; then
+              candidate="$md_stem"
+              break
+            fi
+          done
+          if [ -n "$candidate" ]; then
+            echo "     suggested rename:"
+            echo "       mv \"$html_file\" \"$tier_dir/$candidate.$cext\""
+            echo "       # (matches existing MD: $candidate.md)"
+          else
+            echo "     (no near-match MD found; need a new MD or this file is truly orphaned)"
+          fi
+        fi
+      done
+    done
+  done
+  if [ "$total_companions" -eq 0 ]; then
+    echo "  (no companion files found across any tier)"
+  else
+    echo ""
+    echo "  Summary: $total_companions companion file(s) scanned; $total_orphans orphan(s)"
+    if [ "$total_orphans" -eq 0 ]; then
+      echo "  ✅ all companions paired"
+    fi
+  fi
+}
+
+cmd_open() {
+  # Spec 002 — open a companion artifact for a PRD.
+  # Usage: prd open --html <id>    (or: prd open <id> --html)
+  #
+  # Resolves the id, locates the matching companion (HTML / PDF / PPTX / IPYNB),
+  # and opens via priority: VSCode webview (if VSCODE_IPC_HOOK_CLI set) →
+  # wslview (WSL) → xdg-open (Linux) → error.
+  local id="" cext="html"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --html)  cext="html";  shift ;;
+      --pdf)   cext="pdf";   shift ;;
+      --pptx)  cext="pptx";  shift ;;
+      --ipynb) cext="ipynb"; shift ;;
+      -*) die "unknown flag: $1" ;;
+      *) [ -z "$id" ] && id="$1" || die "extra arg: $1"; shift ;;
+    esac
+  done
+  [ -n "$id" ] || die "usage: prd open --html <id>  (also: --pdf / --pptx / --ipynb)"
+
+  local file; file="$(resolve_id "$id")"
+  local dir; dir="$(dirname "$file")"
+  local stem; stem="$(basename "$file" .md)"
+  local companion="$dir/$stem.$cext"
+
+  if [ ! -e "$companion" ]; then
+    echo "prd: no .$cext companion found for $stem" >&2
+    echo "     expected at: $companion" >&2
+    if [ "$cext" = "html" ]; then
+      echo "     to create one: prd new --html <descriptor>" >&2
+    fi
+    die "missing companion"
+  fi
+
+  echo "prd: opening $companion"
+
+  # Priority chain
+  if [ -n "${VSCODE_IPC_HOOK_CLI:-}" ] && command -v code >/dev/null 2>&1; then
+    # Inside VSCode integrated terminal — open in a new editor tab.
+    # The prdone extension will intercept .html PRDs and surface them in a
+    # WebviewPanel when the corresponding click handler is implemented (T091).
+    code "$companion"
+    return 0
+  fi
+
+  # WSL / Linux desktop fallback
+  if command -v wslview >/dev/null 2>&1; then
+    wslview "$companion"
+    return 0
+  fi
+
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$companion" >/dev/null 2>&1 &
+    return 0
+  fi
+
+  die "no opener found (tried: code, wslview, xdg-open). Open manually: $companion"
+}
+
+cmd_checkout() {
+  # Deterministic checkout: read PRD, surface metadata, classify work/personal,
+  # run git log if a branch is parseable, print briefing card, log to Revision Log.
+  # The /prd-checkout slash command layers MCP/Jira/Confluence queries on top.
+
+  local id="${1:-}"
+  [ -n "$id" ] || die "usage: prd checkout <id>"
+  local file; file="$(resolve_id "$id")"
+
+  python3 - "$file" <<'PY'
+import sys, pathlib, re, subprocess, os, datetime
+
+p = pathlib.Path(sys.argv[1])
+text = p.read_text(errors="replace")
+
+def section(name):
+    m = re.search(rf'^##\s*\d*\.?\s*{re.escape(name)}\s*\n+(.+?)(?:\n##|\Z)',
+                  text, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+def first_match(pattern):
+    m = re.search(pattern, text)
+    return m.group(0) if m else None
+
+# --- Metadata ---
+title_match = re.search(r'^#\s+(.+)$', text, re.M)
+title = title_match.group(1).strip() if title_match else p.stem
+
+related_match = re.search(r'\*\*Related:\*\*\s*(.+?)(?:\n|$)', text)
+related = related_match.group(1).strip() if related_match else ""
+
+ephemeral_match = re.search(r'\*\*Delete when:\*\*\s*(.+?)(?:\n|$)', text)
+ephemeral = ephemeral_match.group(1).strip() if ephemeral_match else "(missing)"
+
+age_days = int((datetime.datetime.now().timestamp() - p.stat().st_mtime) / 86400)
+
+# --- Signal extraction ---
+signals = {
+    "jira_ids":   sorted(set(re.findall(r'\b(?:DEV|HCC|RAF|BAS|DAT|DE|EST|QUAL|SAL|PRE|MAO|A1C|AWV|CDIA)-\d+\b', text))),
+    "bitbucket":  sorted(set(re.findall(r'bitbucket\.org/herselfhealth/[\w-]+', text))),
+    "branches":   sorted(set(re.findall(r'\b(?:feature|fix|chore|hotfix)/[\w/.-]+', text))),
+    "pr_numbers": sorted(set(re.findall(r'PR\s*#?\s*(\d+)|/pull-requests/(\d+)', text))),
+    "hh_keywords": sorted(set(w.lower() for w in re.findall(
+        r'\b(athenahealth|athenaone|hhdev|cube|zeno|databricks|hcc|raf|navina|herself|elementary|dbt[a-z]*|fusion|MDM)\b',
+        text, re.I))),
+    "filesystem_paths": sorted(set(re.findall(r'~/dev/[\w./-]+|/home/gyasisutton/dev/[\w./-]+', text))),
+    "confluence":  bool(re.search(r'atlassian\.net|confluence', text, re.I)),
+}
+
+# Classification heuristic
+work_score = (
+    len(signals["jira_ids"]) * 3 +
+    len(signals["bitbucket"]) * 3 +
+    len(signals["hh_keywords"]) * 1 +
+    (5 if signals["confluence"] else 0)
+)
+personal_score = 0  # no strong personal markers — default null hypothesis
+if work_score >= 3:
+    classification = "WORK"
+elif work_score == 0:
+    classification = "PERSONAL"
+else:
+    classification = "AMBIGUOUS"
+
+# --- Likely project folder ---
+project_dir = ""
+for path_str in signals["filesystem_paths"]:
+    expanded = os.path.expanduser(path_str)
+    if os.path.isdir(expanded):
+        project_dir = expanded
+        break
+# Fallback: look for common HH repo paths if WORK
+if not project_dir and classification == "WORK":
+    for cand in ("~/dev/databricks-dbt", "~/dev/tools/zeno", "~/dev/hh-dev"):
+        e = os.path.expanduser(cand)
+        if os.path.isdir(e):
+            project_dir = e
+            break
+
+# --- Git log on the branch (if parseable + repo present) ---
+git_log = ""
+if signals["branches"] and project_dir:
+    branch = signals["branches"][0]
+    try:
+        out = subprocess.run(
+            ["git", "-C", project_dir, "log", "--oneline", "-15", branch],
+            capture_output=True, text=True, timeout=10
+        )
+        if out.returncode == 0:
+            git_log = out.stdout.strip()
+    except Exception:
+        pass
+
+# --- Decisions Log + Open Items extracts ---
+decisions = section("Decisions Log")
+open_items = section("Open Items")
+
+# --- Print briefing card ---
+print()
+print("─" * 72)
+print(f"📋 CHECKOUT: {title}")
+print("─" * 72)
+print(f"   id:           {p.stem}")
+print(f"   tier:         {p.parent.name}")
+print(f"   age:          {age_days}d")
+print(f"   delete when:  {ephemeral}")
+print(f"   related:      {related or '(none specified)'}")
+print()
+print(f"🏷  CLASSIFICATION: {classification}  (work_score={work_score})")
+print()
+if signals["jira_ids"]:    print(f"   Jira tickets:   {', '.join(signals['jira_ids'])}")
+if signals["bitbucket"]:   print(f"   Bitbucket repos: {', '.join(signals['bitbucket'])}")
+if signals["branches"]:    print(f"   Branches:       {', '.join(signals['branches'])}")
+if signals["pr_numbers"]:  print(f"   PRs:            {', '.join(t for tup in signals['pr_numbers'] for t in tup if t)}")
+if signals["hh_keywords"]: print(f"   HH keywords:    {', '.join(signals['hh_keywords'])}")
+if signals["confluence"]:  print(f"   Confluence:     referenced in PRD")
+
+if project_dir:
+    print()
+    print(f"📂 PROJECT FOLDER: {project_dir}")
+
+if git_log:
+    print()
+    print("📝 RECENT COMMITS on branch:")
+    for line in git_log.splitlines()[:10]:
+        print(f"   {line}")
+
+if open_items.strip() and len(open_items) < 1000:
+    print()
+    print("📌 OPEN ITEMS:")
+    for line in open_items.splitlines()[:10]:
+        if line.strip():
+            print(f"   {line}")
+
+if decisions.strip() and len(decisions) < 1500:
+    print()
+    print("⚖  RECENT DECISIONS:")
+    for line in decisions.splitlines()[-8:]:
+        if line.strip() and not line.startswith("|---") and not re.match(r'\|\s*Time\s*\|', line):
+            print(f"   {line}")
+
+print()
+print("─" * 72)
+print(f"💡 To deepen: /prd-checkout {p.stem}")
+print(f"   (asks before querying Jira/Confluence/Bitbucket via MCP)")
+print(f"💡 To work in folder: cd {project_dir or '<project_dir>'}")
+print("─" * 72)
+print()
+
+# Emit structured signals on stderr so the slash command's caller can parse if needed
+import json as _j
+print(f"PRD_CHECKOUT_SIGNALS={_j.dumps({'classification': classification, 'project_dir': project_dir, 'jira_ids': signals['jira_ids'], 'branches': signals['branches'], 'bitbucket': signals['bitbucket'], 'has_confluence': signals['confluence']})}",
+      file=sys.stderr)
+PY
+
+  # Append checkout event to Revision Log (touches lock since the file may be in scratch/library)
+  take_lock
+  python3 - "$file" "$(now_iso)" <<'PY'
+import sys, pathlib, re
+p, ts = sys.argv[1:3]
+text = pathlib.Path(p).read_text()
+marker = "## 7. Revision Log"
+if marker not in text:
+    sys.exit(0)
+head, rest = text.split(marker, 1)
+lines = rest.split("\n")
+insert_at = len(lines)
+for i, ln in enumerate(lines):
+    if ln.startswith("## ") and i > 2:
+        insert_at = i; break
+rev_match = re.findall(r'^\|\s*(\d+\.\d+)\s*\|', text, re.M)
+last_v = rev_match[-1] if rev_match else "0.1"
+major, minor = last_v.split(".")
+new_v = f"{major}.{int(minor)+1}"
+new_row = f"| {new_v} | {ts.split('T')[0]} | Checked out for active work |"
+lines.insert(insert_at, new_row)
+pathlib.Path(p).write_text(head + marker + "\n".join(lines))
+PY
+  release_lock
+}
+
+cmd_summary() {
+  # Librarian-style card-catalog view across all 3 tiers.
+  # Reads each PRD, extracts metadata + first-paragraph context, prints cards.
+  # Filters: --stale-only --active-only --archived-only --graduated-only --tier <name>
+  # Sort:    --by-age (default) --by-tier --by-significance
+  # Format:  --json --table --cards (default)
+
+  local filter_tier="all" stale_only=0 sort_by="age" fmt="cards" with_tree=0
+  local tag_filter="" group_by=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --stale-only)       stale_only=1; shift ;;
+      --active-only)      filter_tier="scratch"; shift ;;
+      --archived-only)    filter_tier="archive"; shift ;;
+      --graduated-only)   filter_tier="library"; shift ;;
+      --tier)             filter_tier="$2"; shift 2 ;;
+      --by-age)           sort_by="age"; shift ;;
+      --by-tier)          sort_by="tier"; shift ;;
+      --by-significance)  sort_by="sig"; shift ;;
+      --json)             fmt="json"; shift ;;
+      --table)            fmt="table"; shift ;;
+      --cards)            fmt="cards"; shift ;;
+      --with-tree)        with_tree=1; shift ;;
+      --tag)              tag_filter="$2"; shift 2 ;;
+      --group-by)         group_by="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  python3 - "$SCRATCH" "$ARCHIVE" "$LIBRARY" "$filter_tier" "$stale_only" "$sort_by" "$fmt" "$with_tree" "$tag_filter" "$group_by" <<'PY'
+import sys, pathlib, re, json, datetime, os
+
+scratch_d, archive_d, library_d, filt, stale_only, sort_by, fmt, with_tree, tag_filter, group_by = sys.argv[1:11]
+stale_only = stale_only == "1"
+with_tree = with_tree == "1"
+tag_filter = tag_filter or ""
+group_by = group_by or ""
+
+def extract(path: pathlib.Path, tier: str):
+    try:
+        text = path.read_text(errors="replace")
+    except Exception:
+        return None
+
+    age_days = int((datetime.datetime.now().timestamp() - path.stat().st_mtime) / 86400)
+
+    # Title — H1 or filename stem
+    m = re.search(r'^#\s+(.+)$', text, re.M)
+    title = m.group(1).strip() if m else path.stem
+
+    # Status — RESOLVED if "## Resolution" header present; DRAFT/IN-PROGRESS otherwise
+    has_resolution = bool(re.search(r'^##\s+Resolution', text, re.M))
+    status = "RESOLVED" if has_resolution else "ACTIVE"
+
+    # Ephemeral marker — first "**Delete when:**"
+    em = re.search(r'\*\*Delete when:\*\*\s*(.+?)(?:\n|$)', text)
+    ephemeral = em.group(1).strip() if em else "(missing)"
+
+    # First paragraph of Context section
+    ctx = re.search(r'^##\s*1\.\s*Context\s*\n+(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    if ctx:
+        first_para = ctx.group(1).strip().split("\n\n")[0]
+        # Trim placeholder/template text
+        first_para = first_para.strip()
+        if first_para.startswith("("):
+            first_para = "(no context written yet)"
+    else:
+        first_para = "(no Context section)"
+
+    # Decisions count — non-empty rows in Decisions Log
+    dec_section = re.search(r'^##\s*4\.\s*Decisions Log\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    decisions = 0
+    if dec_section:
+        for line in dec_section.group(1).splitlines():
+            if line.startswith("|") and not line.startswith("|---") and not re.match(r'\|\s*Time\s*\|', line):
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if any(cells):
+                    decisions += 1
+
+    # Subagent count
+    sub_section = re.search(r'^##\s*3\.\s*Subagent Log\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    subagents = 0
+    if sub_section:
+        for line in sub_section.group(1).splitlines():
+            if line.startswith("|") and not line.startswith("|---") and not re.match(r'\|\s*Spawn\s*\|', line):
+                cells = [c.strip() for c in line.strip("|").split("|")]
+                if any(cells):
+                    subagents += 1
+
+    # Significance score from Resolution Summary, if present
+    sig_match = re.search(r'\*\*Significance score:\*\*\s*(\d+)', text)
+    significance = int(sig_match.group(1)) if sig_match else None
+
+    # Frontmatter tags (scratch + archive + library all use the same shape).
+    # Auto-tagger writes `tags: [a, b, c]` — strip the YAML array brackets and
+    # whitespace so consumers get a clean CSV `a,b,c`.
+    fm_match = re.match(r'---\n(.*?)\n---', text, re.S)
+    fm_tags = ""
+    if fm_match:
+        for line in fm_match.group(1).splitlines():
+            if line.startswith("tags:"):
+                raw = line.split(":", 1)[1].strip()
+                raw = raw.strip("[]").strip()
+                fm_tags = ",".join(t.strip() for t in raw.split(",") if t.strip())
+
+    is_stale = (tier == "scratch" and age_days >= 14 and not has_resolution)
+
+    # §11 / B5c data plumbing — read typed relations.
+    # Priority order:
+    #   1. `## Relations` JSON code block        (canonical)
+    #   2. `## Relations` typed bullets           (legacy v1)
+    #   3. `**Parent:**` header + `## Children`   (legacy v0)
+    # Always extracted; only emitted to JSON when --with-tree is set.
+    relations = []  # list[{type, slug, reason}]
+    seen_rel = set()
+    def _add_rel(rt, slug, reason=""):
+        if (rt, slug) in seen_rel: return
+        seen_rel.add((rt, slug))
+        relations.append({"type": rt, "slug": slug, "reason": (reason or "").strip()})
+
+    # 1) JSON-block Relations.
+    jm = re.search(r'^##\s+Relations\s*\n+```json\s*\n(.*?)\n```\s*\n?', text, re.M | re.S)
+    if jm:
+        try:
+            data = json.loads(jm.group(1))
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and isinstance(item.get("type"), str) and isinstance(item.get("slug"), str):
+                        _add_rel(item["type"], item["slug"], item.get("reason", ""))
+        except json.JSONDecodeError:
+            pass
+    # 2) Bullet-format Relations (only if no JSON block).
+    if not relations:
+        sec = re.search(r'^##\s+Relations\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+        if sec:
+            BULLET_RE = re.compile(r'^\s*-\s+([a-z][a-z\-]*)\s*:\s*([A-Za-z0-9_.\-]+)(?:\s+—\s+(.*))?\s*$')
+            for line in sec.group(1).splitlines():
+                bm = BULLET_RE.match(line)
+                if bm:
+                    _add_rel(bm.group(1), bm.group(2), bm.group(3))
+    # 3) Always merge legacy headers (so v0 PRDs still appear in the graph).
+    pm = re.search(r'^\*\*Parent:\*\*\s*([A-Za-z0-9_.\-]+)\s*$', text, re.M)
+    if pm:
+        _add_rel("parent", pm.group(1).strip(), "")
+    ch_section = re.search(r'^##\s+Children\s*\n(.+?)(?:\n##|\Z)', text, re.M | re.S)
+    if ch_section:
+        TYPED = re.compile(r'^\s*-\s+[a-z][a-z\-]*\s*:')
+        for line in ch_section.group(1).splitlines():
+            if TYPED.match(line):  # skip if accidentally typed
+                continue
+            cm = re.match(r'^\s*-\s+([A-Za-z0-9_.\-]+)', line)
+            if cm:
+                _add_rel("child", cm.group(1), "")
+
+    # Backward-compat scalars for older clients (extension < §5c update).
+    parent = next((r["slug"] for r in relations if r["type"] == "parent"), None)
+    children = sorted({r["slug"] for r in relations if r["type"] == "child"})
+
+    # Spec 002 — scan sibling files for companion artifacts (HTML / PDF / PPTX / IPYNB).
+    # Each companion shares the same base stem as the .md, only the extension differs.
+    # See ~/dev/projects/prdone/specs/002-html-companions/data-model.md §1 and §4.
+    companions = {}
+    for cext in ("html", "pdf", "pptx", "ipynb"):
+        sibling = path.with_suffix("." + cext)
+        if sibling.exists():
+            companions[cext] = str(sibling)
+    companions_field = companions if companions else None
+
+    return {
+        "tier": tier,
+        "id": path.stem,
+        "title": title,
+        "path": str(path),
+        "age_days": age_days,
+        "status": status,
+        "ephemeral": ephemeral,
+        "context": first_para[:280],
+        "decisions": decisions,
+        "subagents": subagents,
+        "significance": significance,
+        "tags": fm_tags,
+        "stale": is_stale,
+        "companions": companions_field,
+        "_parent_raw": parent,
+        "_children_raw": children,
+        "_relations_raw": relations,
+    }
+
+entries = []
+tier_paths = {
+    "scratch": pathlib.Path(scratch_d),
+    "archive": pathlib.Path(archive_d),
+    "library": pathlib.Path(library_d),
+}
+for tier, d in tier_paths.items():
+    if filt != "all" and filt != tier:
+        continue
+    if not d.exists():
+        continue
+    for f in sorted(d.glob("*.md")):
+        if f.name in ("README.md", "INDEX.md"):
+            continue
+        e = extract(f, tier)
+        if e is None:
+            continue
+        if stale_only and not e["stale"]:
+            continue
+        if tag_filter:
+            tag_tokens = set(t.strip() for t in (e.get("tags") or "").split(",") if t.strip())
+            if tag_filter not in tag_tokens:
+                continue
+        entries.append(e)
+
+# Sort
+if sort_by == "age":
+    entries.sort(key=lambda x: x["age_days"], reverse=True)
+elif sort_by == "tier":
+    order = {"scratch": 0, "archive": 1, "library": 2}
+    entries.sort(key=lambda x: (order.get(x["tier"], 9), -x["age_days"]))
+elif sort_by == "sig":
+    entries.sort(key=lambda x: -(x["significance"] or 0))
+
+# §11 tree finalization: when --with-tree is set, emit
+#   parent:    string|null              (legacy scalar, first parent edge)
+#   children:  string[]                 (legacy scalar, all child edges)
+#   relations: [{type, slug, reason}]   (canonical typed-edge list)
+# Reverse-derives missing back-edges so the graph is symmetric (e.g. if PRD A
+# declares `parent: B` but B has no matching `child: A`, we synthesise it).
+if with_tree:
+    INVERSE = {
+        "parent": "child", "child": "parent",
+        "blocks": "blocked-by", "blocked-by": "blocks",
+        "supersedes": "superseded-by", "superseded-by": "supersedes",
+        "relates-to": "relates-to",
+    }
+    by_id = {e["id"]: e for e in entries}
+
+    # Synthesise reverse edges where the target exists in our set but didn't
+    # declare the inverse. We DO NOT mutate files — this is read-only.
+    for e in entries:
+        for r in list(e.get("_relations_raw") or []):
+            inv = INVERSE.get(r["type"])
+            if not inv: continue
+            tgt = by_id.get(r["slug"])
+            if tgt is None: continue
+            tgt_rels = tgt.setdefault("_relations_raw", [])
+            if not any(rr["type"] == inv and rr["slug"] == e["id"] for rr in tgt_rels):
+                tgt_rels.append({"type": inv, "slug": e["id"], "reason": ""})
+
+    for e in entries:
+        rels = e.get("_relations_raw") or []
+        e["relations"] = rels
+        e["parent"] = next((r["slug"] for r in rels if r["type"] == "parent"), None)
+        e["children"] = sorted({r["slug"] for r in rels if r["type"] == "child"})
+        e.pop("_parent_raw", None)
+        e.pop("_children_raw", None)
+        e.pop("_relations_raw", None)
+else:
+    for e in entries:
+        e.pop("_parent_raw", None)
+        e.pop("_children_raw", None)
+        e.pop("_relations_raw", None)
+
+# Output
+if fmt == "json":
+    print(json.dumps(entries, indent=2))
+    sys.exit(0)
+
+if not entries:
+    print("(no PRDs match the filter)")
+    sys.exit(0)
+
+# Counts header
+counts = {"scratch": 0, "archive": 0, "library": 0, "stale": 0}
+for e in entries:
+    counts[e["tier"]] += 1
+    if e["stale"]:
+        counts["stale"] += 1
+
+print()
+print(f"📚 PRD LIBRARIAN — {len(entries)} entries  "
+      f"(scratch={counts['scratch']} archive={counts['archive']} "
+      f"library={counts['library']} stale={counts['stale']})")
+print("=" * 72)
+
+if fmt == "table":
+    print(f"\n{'TIER':<8}  {'AGE':>4}  {'STATUS':<9}  {'D':>2} {'A':>2}  {'SIG':>4}  TITLE")
+    print("-" * 72)
+    for e in entries:
+        sig = f"{e['significance']:>4}" if e["significance"] is not None else "  - "
+        flag = " ⏸" if e["stale"] else ("  📚" if e["tier"] == "library" else "")
+        print(f"{e['tier']:<8}  {e['age_days']:>3}d  {e['status']:<9}  "
+              f"{e['decisions']:>2} {e['subagents']:>2}  {sig}  {e['title'][:50]}{flag}")
+    sys.exit(0)
+
+# Group-by-namespace pass (e.g. --group-by domain → bucket each entry by its
+# domain:* tag values; entries with no tag in that namespace go to "(untagged)").
+def _bucket(e, ns):
+    tokens = [t.strip() for t in (e.get("tags") or "").split(",") if t.strip()]
+    vals = sorted({t.split(":", 1)[1] for t in tokens if t.startswith(f"{ns}:")})
+    return vals if vals else ["(untagged)"]
+
+groups = None
+if group_by:
+    groups = {}
+    for e in entries:
+        for v in _bucket(e, group_by):
+            groups.setdefault(v, []).append(e)
+
+# Cards (default)
+icon = {"scratch": "📝", "archive": "📦", "library": "📚"}
+
+def _print_card(e):
+    flag = " ⏸ STALE" if e["stale"] else ""
+    sig = f" • significance={e['significance']}" if e["significance"] is not None else ""
+    print()
+    print(f"{icon[e['tier']]} [{e['tier'].upper()}] {e['title']}{flag}")
+    print(f"   id:        {e['id']}")
+    print(f"   age:       {e['age_days']}d  •  status: {e['status']}{sig}")
+    print(f"   activity:  {e['decisions']} decisions  •  {e['subagents']} subagents")
+    if e["tags"]:
+        print(f"   tags:      {e['tags']}")
+    print(f"   delete:    {e['ephemeral']}")
+    print(f"   summary:   {e['context'][:200]}")
+    print(f"   path:      {e['path']}")
+
+if groups is not None:
+    for g in sorted(groups.keys()):
+        print()
+        print(f"━━━ {group_by}:{g}  ({len(groups[g])} PRDs)  ━━━")
+        for e in groups[g]:
+            _print_card(e)
+else:
+    for e in entries:
+        _print_card(e)
+
+print()
+print("─" * 72)
+PY
+}
+
+# ---------- dispatch ----------
+sub="${1:-help}"; shift || true
+case "$sub" in
+  new)       cmd_new "$@" ;;
+  list)      cmd_list "$@" ;;
+  link)      cmd_link "$@" ;;
+  link-parent)   cmd_link_parent "$@" ;;
+  unlink-parent) cmd_unlink_parent "$@" ;;
+  relate)        cmd_relate "$@" ;;
+  unrelate)      cmd_unrelate "$@" ;;
+  orphans)   cmd_orphans "$@" ;;
+  attach)    cmd_attach "$@" ;;
+  log)       cmd_log "$@" ;;
+  diary)     cmd_diary "$@" ;;
+  resolve)   cmd_resolve "$@" ;;
+  graduate)  cmd_graduate "$@" ;;
+  revision)  cmd_revision "$@" ;;
+  reopen)    cmd_reopen "$@" ;;
+  find)      cmd_find "$@" ;;
+  tag)       cmd_tag "$@" ;;
+  tag-audit) cmd_tag_audit "$@" ;;
+  sweep)     cmd_sweep "$@" ;;
+  doctor)    cmd_doctor ;;
+  open)      cmd_open "$@" ;;
+  context)   cmd_context ;;
+  init-owner) cmd_init_owner "$@" ;;
+  summary|librarian)  cmd_summary "$@" ;;
+  checkout)  cmd_checkout "$@" ;;
+  -h|--help|help)
+    sed -n '1,25p' "$0"
+    ;;
+  -v|--version|version)
+    echo "prd 0.2.0 — Spec 002 (HTML companion PRDs)"
+    ;;
+  *) die "unknown subcommand: $sub (try 'prd help')" ;;
+esac

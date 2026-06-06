@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!--
+  Spec 002 — HTML Companion stub template.
+  Emitted by `prd new --html <descriptor>` (T071). Authored as part of T072.
+  Size budget: <= 3 KB.
+
+  After this file lands at ~/dev/prd/scratch/<descriptor>_<YYYY-MM-DD>.html,
+  run `/design-prd <descriptor>` in Claude Code to fill the content.
+
+  Placeholder tokens substituted at emit time:
+    {{descriptor}}     — kebab-or-snake-case PRD identifier
+    {{title}}          — human title, falls back to descriptor
+    {{date}}           — YYYY-MM-DD creation date
+    {{tier}}           — "scratch" | "archive" | "library"
+-->
+<html lang="en" data-document-type="design-prd-stub" data-status="empty">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{title}} — Design PRD (stub)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,300..600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+  <style>
+    :root { --ink:#1f2a3d; --paper:#faf6ec; --oxblood:#6b1f1f; --rule:rgba(31,42,61,0.18); }
+    body { margin:0; padding:3rem; font-family:'Newsreader',serif; color:var(--ink); background:var(--paper); }
+    .wordmark { font-size:clamp(4rem,12vw,8rem); font-weight:300; letter-spacing:0.12em; text-align:center; margin:2rem 0; line-height:0.95; }
+    .deck { font-style:italic; text-align:center; color:var(--oxblood); font-size:1.25rem; margin-bottom:3rem; }
+    .placeholder { border:1px dashed var(--rule); padding:2rem; margin:1.5rem 0; text-align:center; font-family:'JetBrains Mono',monospace; font-size:0.875rem; color:var(--ink); opacity:0.6; }
+    .meta { font-family:'JetBrains Mono',monospace; font-size:0.75rem; letter-spacing:0.18em; text-transform:uppercase; color:var(--oxblood); text-align:center; margin-bottom:2rem; }
+    footer { margin-top:4rem; border-top:1px solid var(--rule); padding-top:1.5rem; font-family:'JetBrains Mono',monospace; font-size:0.7rem; letter-spacing:0.15em; color:var(--ink); opacity:0.6; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="meta">{{tier}} · {{date}}</div>
+    <h1 class="wordmark">{{descriptor}}</h1>
+    <p class="deck">Design PRD — stub, not yet filled</p>
+  </header>
+
+  <main>
+    <div class="placeholder">§ 00 · TL;DR placeholder</div>
+    <div class="placeholder">§ 01 · System shape placeholder</div>
+    <div class="placeholder">§ 02 · Locked decisions placeholder</div>
+    <div class="placeholder">§ 08 · References placeholder</div>
+
+    <p style="text-align:center; margin:3rem 0; font-style:italic;">
+      Run <code style="font-family:'JetBrains Mono',monospace; color:var(--oxblood);">/design-prd {{descriptor}}</code> in Claude Code to populate.
+    </p>
+  </main>
+
+  <footer>{{descriptor}}_{{date}}.html · companion to {{descriptor}}_{{date}}.md</footer>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "{{title}} — Design PRD (stub)",
+    "identifier": "{{descriptor}}_{{date}}",
+    "datePublished": "{{date}}",
+    "version": "0.0-stub",
+    "description": "Stub Design PRD. Not yet authored — run /design-prd to fill."
+  }
+  </script>
+</body>
+</html>

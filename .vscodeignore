@@ -1,0 +1,32 @@
+.vscode/**
+.vscode-test/**
+src/**
+tests/**
+specs/**
+node_modules/**
+.specify/**
+.specstory/**
+.claude/**
+.devkid/**
+memory-bank/**
+.gitignore
+.gitattributes
+**/*.ts
+**/*.map
+**/tsconfig*.json
+**/vitest.config.*
+**/esbuild.config.*
+dev-kid.yml
+ralph-tiers.json
+execution_plan.json
+package-lock.json
+tasks.md
+PRD.md
+CLAUDE.md
+prd-skills-summary.md
+tasks.md
+design-explorations/**
+
+# NOTE: bundle/** is intentionally NOT ignored — it carries the prd CLI +
+# skills payload that the `prd.installSkills` command (and install.sh) copy
+# into the user's home. Excluding it ships a .vsix whose installer cannot work.

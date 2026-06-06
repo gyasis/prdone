@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PRDs. — A visualizer for the prd CLI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800;900&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Theme tokens                                                              */
+/* ───────────────────────────────────────────────────────────────────────── */
+:root, [data-theme="dark"] {
+  --bg:              #0e1117;
+  --bg-grad-a:       #131a25;
+  --col-bg:          #11151c;
+  --tile-bg:         #161b25;
+  --tile-bg-hover:   #1c2230;
+  --tile-border:     rgba(230, 220, 200, 0.10);
+  --tile-border-hover: rgba(230, 220, 200, 0.32);
+  --ink:             #e6dcc8;
+  --ink-soft:        rgba(230, 220, 200, 0.74);
+  --ink-dim:         rgba(230, 220, 200, 0.42);
+  --hairline:        rgba(230, 220, 200, 0.12);
+  --hairline-strong: rgba(230, 220, 200, 0.26);
+  --accent:          #e98e5a;
+  --accent-deep:     #cf5e2c;
+  --accent-soft:     rgba(233, 142, 90, 0.14);
+  --accent-glow:     rgba(233, 142, 90, 0.20);
+  --status-active:   #82be72;
+  --status-draft:    #e9b35a;
+  --status-resolved: #7fa9d2;
+  --grain-opacity:   0.025;
+  --shadow-sm: 0 1px 0 rgba(0,0,0,0.4);
+  --shadow-md: 0 8px 24px -10px rgba(0,0,0,0.7);
+  --shadow-lg: 0 32px 80px -20px rgba(0,0,0,0.8);
+  --selected-ring: 0 0 0 1px var(--accent), 0 0 0 4px rgba(233,142,90,0.18);
+}
+[data-theme="light"] {
+  --bg:              #efe7d6;
+  --bg-grad-a:       #ece2cd;
+  --col-bg:          #e8dec9;
+  --tile-bg:         #f7f0e1;
+  --tile-bg-hover:   #fcf6ea;
+  --tile-border:     rgba(26, 29, 46, 0.10);
+  --tile-border-hover: rgba(26, 29, 46, 0.30);
+  --ink:             #1a1d2e;
+  --ink-soft:        rgba(26, 29, 46, 0.72);
+  --ink-dim:         rgba(26, 29, 46, 0.44);
+  --hairline:        rgba(26, 29, 46, 0.10);
+  --hairline-strong: rgba(26, 29, 46, 0.26);
+  --accent:          #cf5e2c;
+  --accent-deep:     #a04416;
+  --accent-soft:     rgba(207, 94, 44, 0.10);
+  --accent-glow:     rgba(207, 94, 44, 0.16);
+  --status-active:   #5a8048;
+  --status-draft:    #b07628;
+  --status-resolved: #4d6f8a;
+  --grain-opacity:   0.045;
+  --shadow-sm: 0 1px 0 rgba(26,29,46,0.05);
+  --shadow-md: 0 8px 22px -10px rgba(26,29,46,0.22);
+  --shadow-lg: 0 32px 80px -20px rgba(26,29,46,0.32);
+  --selected-ring: 0 0 0 1px var(--accent), 0 0 0 4px rgba(207,94,44,0.14);
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Reset + body atmosphere (paper grain + radial glow — body is not flat)    */
+/* ───────────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  position: relative;
+}
+body::before {
+  /* radial atmosphere */
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 24%, var(--accent-glow) 0%, transparent 38%),
+    radial-gradient(circle at 82% 78%, var(--accent-glow) 0%, transparent 42%),
+    radial-gradient(circle at 50% 50%, var(--bg-grad-a) 0%, transparent 60%);
+  z-index: 0;
+}
+body::after {
+  /* paper grain */
+  content: "";
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.5 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+  opacity: var(--grain-opacity);
+  mix-blend-mode: overlay;
+  z-index: 1;
+}
+
+::selection { background: var(--accent); color: var(--bg); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hairline-strong); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--ink-dim); background-clip: padding-box; border: 2px solid transparent; }
+
+.app {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  height: 100vh;
+  position: relative;
+  z-index: 2;
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Header                                                                    */
+/* ───────────────────────────────────────────────────────────────────────── */
+header {
+  padding: 28px 40px 14px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 24px;
+}
+.wordmark {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-weight: 800;
+  font-size: clamp(56px, 7.5vw, 104px);
+  line-height: 0.86;
+  letter-spacing: -0.052em;
+  margin: 0;
+  color: var(--ink);
+  font-feature-settings: 'ss01' 1, 'cv11' 1, 'kern' 1;
+  text-shadow: 0 0 80px rgba(0,0,0,0.35);
+}
+.wordmark .stop {
+  color: var(--accent);
+  font-weight: 900;
+  display: inline-block;
+  transform: translateY(0.02em);
+  margin-left: -0.02em;
+}
+.breadcrumb {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-soft);
+  letter-spacing: 0.025em;
+  margin-top: 12px;
+  display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+}
+.breadcrumb .sep { opacity: 0.4; }
+.breadcrumb .live { display: inline-flex; align-items: center; gap: 6px; }
+.breadcrumb .live::before {
+  content: '';
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--status-active);
+  box-shadow: 0 0 0 0 var(--status-active);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+.breadcrumb strong { color: var(--ink); font-weight: 600; }
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(130, 190, 114, 0.6); }
+  50%      { opacity: 0.45; box-shadow: 0 0 0 6px rgba(130, 190, 114, 0); }
+}
+
+.header-right {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+}
+.theme-pill {
+  display: flex; gap: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 100px;
+  padding: 3px;
+  background: var(--col-bg);
+}
+.theme-pill button {
+  background: transparent; border: none;
+  color: var(--ink-soft);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 5px 14px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all 140ms;
+}
+.theme-pill button:hover { color: var(--ink); }
+.theme-pill button.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Toolbar                                                                   */
+/* ───────────────────────────────────────────────────────────────────────── */
+.toolbar {
+  padding: 8px 40px 16px;
+  display: flex; align-items: center; gap: 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.search {
+  flex: 0 1 420px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--col-bg);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  padding: 7px 12px;
+  transition: all 160ms;
+}
+.search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.search svg { width: 14px; height: 14px; opacity: 0.55; flex-shrink: 0; }
+.search input {
+  background: transparent; border: none; outline: none;
+  color: var(--ink);
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+}
+.search input::placeholder { color: var(--ink-dim); }
+.search kbd {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-dim);
+  padding: 2px 6px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.search:focus-within kbd { display: none; }
+
+.filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 100px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+  transition: all 140ms;
+  letter-spacing: 0.005em;
+  white-space: nowrap;
+}
+.chip:hover { color: var(--ink); border-color: var(--ink-dim); }
+.chip.active {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+.chip .ct {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  margin-left: 6px;
+  opacity: 0.7;
+  font-weight: 500;
+}
+.chip.active .ct { opacity: 0.85; }
+
+.view-toggle {
+  margin-left: auto;
+  display: flex;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.view-toggle button {
+  background: transparent; border: none;
+  color: var(--ink-soft);
+  padding: 6px 10px;
+  cursor: pointer;
+  display: flex; align-items: center;
+  transition: all 140ms;
+}
+.view-toggle button:hover { color: var(--ink); }
+.view-toggle button.active { background: var(--ink); color: var(--bg); }
+.view-toggle button svg { width: 14px; height: 14px; }
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Board (3-column kanban)                                                   */
+/* ───────────────────────────────────────────────────────────────────────── */
+.board {
+  padding: 14px 40px 14px;
+  display: grid;
+  grid-template-columns: 2.2fr 1.4fr 1fr;
+  gap: 16px;
+  overflow: hidden;
+  min-height: 0;
+}
+.col {
+  background: var(--col-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.col-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--hairline);
+  position: sticky; top: 0;
+  background: var(--col-bg);
+  z-index: 2;
+  flex-shrink: 0;
+}
+.col-head .glyph {
+  font-size: 17px;
+  line-height: 1;
+  filter: saturate(0.85);
+}
+.col-head h2 {
+  font-family: 'Geist', system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 18px;
+  letter-spacing: -0.022em;
+  margin: 0;
+  color: var(--ink);
+}
+.col-head h2 em {
+  font-style: italic;
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 2px;
+}
+.col-head .count {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+  margin-left: auto;
+}
+.col-head .count strong { color: var(--ink-soft); font-weight: 500; }
+.col-head .count em { font-style: normal; color: var(--accent); }
+.col-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.col-body .empty-state {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+  text-align: center;
+  padding: 40px 20px;
+  letter-spacing: 0.05em;
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Tile                                                                      */
+/* ───────────────────────────────────────────────────────────────────────── */
+.tile {
+  background: var(--tile-bg);
+  border: 1px solid var(--tile-border);
+  border-radius: 10px;
+  padding: 13px 14px 11px;
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.2, 0.7, 0.2, 1),
+              border-color 160ms ease,
+              background-color 160ms ease,
+              box-shadow 160ms ease,
+              opacity 200ms ease,
+              filter 200ms ease;
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  outline: none;
+}
+.tile:hover {
+  border-color: var(--tile-border-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  background: var(--tile-bg-hover);
+}
+.tile:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--selected-ring);
+}
+.tile.selected {
+  border-color: var(--accent);
+  box-shadow: var(--selected-ring);
+}
+.tile.kbd-focus {
+  border-color: var(--accent);
+  box-shadow: var(--selected-ring);
+}
+.tile[data-stale="true"] {
+  opacity: 0.55;
+  filter: saturate(0.4);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 12px,
+    rgba(233, 142, 90, 0.018) 12px,
+    rgba(233, 142, 90, 0.018) 13px
+  );
+}
+.tile[data-stale="true"]:hover { opacity: 0.85; filter: saturate(0.7); }
+.tile[data-stale="true"]::after {
+  content: 'stale';
+  position: absolute;
+  top: 12px; right: 14px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9px; font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.tile-meta-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 7px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.025em;
+  color: var(--ink-dim);
+}
+.age { color: var(--ink-soft); font-weight: 500; }
+.status {
+  padding: 1.5px 8px;
+  border-radius: 100px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.status[data-status="ACTIVE"]   { background: color-mix(in srgb, var(--status-active) 18%, transparent); color: var(--status-active); }
+.status[data-status="DRAFT"]    { background: color-mix(in srgb, var(--status-draft) 20%, transparent); color: var(--status-draft); }
+.status[data-status="RESOLVED"] { background: color-mix(in srgb, var(--status-resolved) 18%, transparent); color: var(--status-resolved); }
+.has-children {
+  margin-left: auto;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.tile-title {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+  font-size: 14.5px;
+  color: var(--ink);
+  line-height: 1.3;
+  margin: 0 0 5px;
+  letter-spacing: -0.005em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+  padding-right: 32px; /* leave room for stale tag */
+}
+.tile-context {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  margin: 0 0 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tile-tags {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;
+}
+.tag {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  padding: 1.5px 7px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  letter-spacing: 0.02em;
+}
+
+.tile-stats {
+  display: flex; align-items: center; gap: 12px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-dim);
+  letter-spacing: 0.025em;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.stat { display: inline-flex; align-items: center; gap: 4px; }
+.stat .glyph { color: var(--ink-soft); font-size: 10.5px; }
+.significance {
+  flex: 1;
+  display: flex; align-items: center; gap: 8px;
+  max-width: 140px;
+  margin-left: auto;
+}
+.sig-label { font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); }
+.sig-bar {
+  flex: 1;
+  height: 2px;
+  background: var(--hairline-strong);
+  border-radius: 2px;
+  overflow: hidden; position: relative;
+}
+.sig-fill {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  background: var(--accent);
+  width: 0;
+  transition: width 700ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.sig-num { color: var(--ink); font-weight: 600; font-size: 10px; }
+.vs-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  margin-left: auto;
+  padding: 2.5px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 100px;
+  transition: all 140ms;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.vs-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Footer                                                                    */
+/* ───────────────────────────────────────────────────────────────────────── */
+footer {
+  padding: 9px 40px;
+  border-top: 1px solid var(--hairline);
+  display: flex; align-items: center; gap: 16px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  letter-spacing: 0.025em;
+  background: var(--col-bg);
+  flex-shrink: 0;
+}
+footer a { color: var(--ink-soft); text-decoration: none; transition: color 120ms; }
+footer a:hover { color: var(--ink); }
+footer .url-link { color: var(--accent); }
+footer .url-link:hover { color: var(--accent-deep); }
+footer .kill { color: var(--accent); cursor: pointer; transition: color 120ms; }
+footer .kill:hover { color: var(--accent-deep); }
+footer .sep { opacity: 0.3; }
+footer .right { margin-left: auto; }
+footer strong { color: var(--ink); font-weight: 600; }
+footer .right em { font-style: italic; color: var(--ink-dim); }
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Detail panel                                                              */
+/* ───────────────────────────────────────────────────────────────────────── */
+.scrim {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0);
+  backdrop-filter: blur(0);
+  -webkit-backdrop-filter: blur(0);
+  pointer-events: none;
+  transition: background 280ms ease, backdrop-filter 280ms ease;
+  z-index: 50;
+}
+.scrim.show {
+  background: rgba(0,0,0,0.42);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  pointer-events: auto;
+}
+[data-theme="light"] .scrim.show { background: rgba(26,29,46,0.18); }
+
+.detail {
+  position: fixed; top: 0; right: 0; bottom: 0;
+  width: min(540px, 92vw);
+  background: var(--bg);
+  border-left: 1px solid var(--hairline-strong);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(100%);
+  transition: transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  z-index: 60;
+  display: flex; flex-direction: column;
+}
+.detail.open { transform: translateX(0); }
+
+.detail-head {
+  padding: 32px 36px 22px;
+  border-bottom: 1px solid var(--hairline);
+  position: relative;
+  flex-shrink: 0;
+}
+.detail-tier-line {
+  display: flex; align-items: center; gap: 9px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  letter-spacing: 0.08em;
+  margin-bottom: 10px;
+  text-transform: uppercase;
+}
+.detail-tier-line .glyph { font-size: 14px; text-transform: none; }
+.detail-tier-line .status { letter-spacing: 0.14em; }
+.detail-title {
+  font-family: 'Geist', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 1.08;
+  letter-spacing: -0.034em;
+  margin: 0 32px 0 0;
+  color: var(--ink);
+}
+.detail-id {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  margin-top: 12px;
+}
+.detail-close {
+  position: absolute;
+  top: 28px; right: 28px;
+  width: 30px; height: 30px;
+  border: 1px solid var(--hairline-strong);
+  background: var(--col-bg);
+  border-radius: 100px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 140ms;
+}
+.detail-close:hover { border-color: var(--accent); color: var(--accent); transform: rotate(90deg); }
+.detail-close svg { width: 12px; height: 12px; }
+
+.detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 36px 32px;
+}
+
+.label {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 24px 0 10px;
+  display: flex; align-items: center; gap: 12px;
+}
+.label::after {
+  content: ''; flex: 1; height: 1px;
+  background: var(--hairline);
+}
+.label:first-child { margin-top: 6px; }
+
+.ephemeral-block {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  padding: 12px 16px;
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+}
+.context-block {
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+  text-wrap: pretty;
+}
+
+.cmd-list { display: flex; flex-direction: column; gap: 6px; }
+.cmd {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  background: var(--col-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 140ms;
+  user-select: none;
+}
+.cmd:hover {
+  border-color: var(--accent);
+  background: var(--tile-bg-hover);
+}
+.cmd-label {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+  transition: color 200ms;
+}
+.cmd-text {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmd-copy { width: 14px; height: 14px; color: var(--ink-dim); transition: color 140ms; }
+.cmd:hover .cmd-copy { color: var(--accent); }
+
+.linked {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 14px;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  align-items: center;
+}
+.linked .arrow { color: var(--accent); font-weight: 600; }
+
+.decisions-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 11.5px;
+}
+.decisions-table th, .decisions-table td {
+  text-align: left;
+  padding: 9px 8px;
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: top;
+}
+.decisions-table th {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 9px;
+  color: var(--ink-dim);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.decisions-table td:first-child {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  width: 90px;
+}
+.decisions-table tr:last-child td { border-bottom: none; }
+.decisions-table .d-title { color: var(--ink); font-weight: 600; }
+.decisions-table .d-rationale { color: var(--ink-soft); font-size: 11px; display: block; margin-top: 3px; line-height: 1.45; }
+
+.full-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-top: 22px;
+  padding: 12px 20px;
+  background: var(--ink);
+  color: var(--bg);
+  border: none;
+  border-radius: 8px;
+  font-family: 'Geist', system-ui, -apple-system, sans-serif;
+  font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  letter-spacing: -0.005em;
+  transition: all 160ms;
+}
+.full-link:hover { background: var(--accent); color: var(--bg); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Mock label                                                                */
+/* ───────────────────────────────────────────────────────────────────────── */
+.mock-label {
+  position: fixed; top: 28px; right: 28px;
+  z-index: 90;
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px; font-weight: 500;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--col-bg) 88%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 5px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 100px;
+  font-variation-settings: 'opsz' 24;
+  pointer-events: none;
+}
+.mock-label::before { content: '◇ '; opacity: 0.55; }
+
+/* ───────────────────────────────────────────────────────────────────────── */
+/*  Toast (for keyboard hints)                                                */
+/* ───────────────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 60px; left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--ink);
+  color: var(--bg);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 8px 16px;
+  border-radius: 100px;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  z-index: 95;
+  box-shadow: var(--shadow-md);
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* small screens — not the primary target but don't break */
+@media (max-width: 1100px) {
+  .board { grid-template-columns: 1.6fr 1fr 1fr; padding: 12px 24px; gap: 12px; }
+  header, .toolbar, footer { padding-left: 24px; padding-right: 24px; }
+  .wordmark { font-size: clamp(48px, 8vw, 80px); }
+}
+</style>
+</head>
+<body>
+
+<div class="mock-label">Browser kanban · v0.1 mock</div>
+
+<div class="app">
+
+  <header>
+    <div>
+      <h1 class="wordmark">PRDs<span class="stop">.</span></h1>
+      <div class="breadcrumb">
+        <span class="live">live · refreshed <span id="refresh-counter">0:04</span> ago</span>
+        <span class="sep">/</span>
+        <span>~/dev/prd</span>
+        <span class="sep">/</span>
+        <span><strong id="total-records">85</strong> records</span>
+        <span class="sep">/</span>
+        <span>scratch <strong>65</strong> · archive <strong>17</strong> · library <strong>3</strong></span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="theme-pill">
+        <button onclick="setTheme('dark')"  id="t-dark"  class="active">Dark</button>
+        <button onclick="setTheme('light')" id="t-light">Light</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="search">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="5"/><path d="M11.5 11.5l3.5 3.5" stroke-linecap="round"/></svg>
+      <input id="search-input" type="text" placeholder="Search 85 PRDs by title, id, or tag…" autocomplete="off" />
+      <kbd>⌘K</kbd>
+    </div>
+    <div class="filters" id="filter-chips">
+      <button class="chip active" data-filter="all">All</button>
+      <button class="chip" data-filter="stale">Stale<span class="ct">12</span></button>
+      <button class="chip" data-filter="active">Active</button>
+      <button class="chip" data-filter="children">Has children</button>
+    </div>
+    <div class="view-toggle">
+      <button class="active" title="Kanban">
+        <svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="4" height="12" rx="1"/><rect x="6" y="2" width="4" height="8" rx="1"/><rect x="11" y="2" width="4" height="10" rx="1"/></svg>
+      </button>
+      <button title="Table" onclick="toast('Table view · v0.2')">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2" width="14" height="12" rx="1"/><path d="M1 6h14 M1 10h14 M5 2v12"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="board">
+    <div class="col">
+      <div class="col-head">
+        <span class="glyph">📝</span>
+        <h2>Scratch <em>·</em></h2>
+        <span class="count"><strong id="ct-scratch">65</strong> records · <em id="ct-scratch-stale">11 stale</em></span>
+      </div>
+      <div class="col-body" id="col-scratch"></div>
+    </div>
+    <div class="col">
+      <div class="col-head">
+        <span class="glyph">📦</span>
+        <h2>Archive <em>·</em></h2>
+        <span class="count"><strong id="ct-archive">17</strong> records · <em id="ct-archive-stale">1 stale</em></span>
+      </div>
+      <div class="col-body" id="col-archive"></div>
+    </div>
+    <div class="col">
+      <div class="col-head">
+        <span class="glyph">📚</span>
+        <h2>Library <em>·</em></h2>
+        <span class="count"><strong id="ct-library">3</strong> records</span>
+      </div>
+      <div class="col-body" id="col-library"></div>
+    </div>
+  </div>
+
+  <footer>
+    <span>▸ <a class="url-link" href="http://127.0.0.1:7373" target="_blank" rel="noopener">http://127.0.0.1:7373</a></span>
+    <span class="sep">|</span>
+    <span>uptime <strong id="uptime">0:14:22</strong></span>
+    <span class="sep">|</span>
+    <span class="kill" onclick="toast('⏻ server stopped (mock)')">⏻ stop server</span>
+    <span class="sep">|</span>
+    <a href="vscode://file/home/gyasisutton/dev/projects/prdone">↶ back to editor</a>
+    <span class="right">PRD lifecycle · <em>v0.1 mock</em></span>
+  </footer>
+
+</div>
+
+<div class="scrim" id="scrim" onclick="closeDetail()"></div>
+<aside class="detail" id="detail" role="dialog" aria-hidden="true">
+  <div class="detail-head">
+    <button class="detail-close" onclick="closeDetail()" aria-label="Close">
+      <svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 6.7L1.7 11l-.7-.7L5.3 6 1 1.7 1.7 1 6 5.3 10.3 1l.7.7L6.7 6 11 10.3l-.7.7L6 6.7z"/></svg>
+    </button>
+    <div class="detail-tier-line">
+      <span class="glyph" id="d-glyph">📝</span>
+      <span id="d-tier-label">scratch</span>
+      <span class="sep">·</span>
+      <span id="d-age">5 days</span>
+      <span class="sep">·</span>
+      <span class="status" id="d-status" data-status="ACTIVE">ACTIVE</span>
+    </div>
+    <h1 class="detail-title" id="d-title">CDIA append-only safety</h1>
+    <div class="detail-id" id="d-id">cdia_append_only_safety_2026-05-02</div>
+  </div>
+  <div class="detail-body" id="d-body"></div>
+</aside>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Data                                                                   */
+/* ────────────────────────────────────────────────────────────────────── */
+const seedScratch = [
+  ['cdia_append_only_safety_2026-05-02','CDIA append-only safety','ACTIVE',5,false,'delete after PR #161 merged + 14d clean','Cube exposes CDIA scoring rows that may be re-keyed when the audit_id natural-key migration lands. Need an append-only safety net so the temporal event log never overwrites a scored row without an explicit replay decision.',7,1],
+  ['vscode_prd_visualizer_2026-05-07','VSCode PRD Visualizer extension','DRAFT',0,false,'delete when v0.1 ships AND used 5 consecutive workdays','PRD lifecycle has matured to ~85 active PRDs. The CLI surface scrolls past 24 lines and returns the wrong tile half the time. Need a graphical replacement that honors the same data model.',13,0],
+  ['hhdev_parallel_worktrees_2026-04-24','hhdev parallel worktrees + AP-010 hardening','ACTIVE',13,false,'delete after 7d zero-zombie incidents','AP-010 zombie cwd mismatch repeated 304x in a single 24h CCM session. Need preflight enforcement, slug-derived ports, per-worktree config.env binding so cube/zeno mount the right dbt models.',21,3],
+  ['hybridrag_disk_recovery_2026-04-22','HybridRAG disk recovery + dedup gate','ACTIVE',15,false,'close after dedup confirmed for 30d','$5K Azure cost spike traced to a dedup gap in the memory indexer. Need content-hash budget guard, bounded LLM caches, log rotation, and a kill-switch on Restart=no for indexer workers.',9,2],
+  ['sio_multi_hop_search_2026-04-24','SIO multi-hop search (filter / recluster / hybrid)','ACTIVE',13,false,'close after sio suggest replaces wide-grep flow','sio suggest grep filter is either too noisy or too narrow. Adds --refine, --strategy, --within cache for a true two-hop cascade with hop-1 errors export.',6,1],
+  ['agentbridge_mcp_colocated_2026-05-06','AgentBridge: colocated MCP source','DRAFT',1,false,'7d to decide colocation','Bundle readability suffers when MCP servers ship from a separate repo. Each adapter ships its MCP server in the same .agent payload so installs are atomic.',3,0],
+  ['cdia_categorized_lookup_2026-05-06','CDIA categorized lookup vs sampling','ACTIVE',1,false,'close after PR #163','Cube measure for HCC categorization is sampling — moving to categorized lookup against vw_hcc_assessment_categorized. Concordance baseline 100% on 17,983 rows.',4,0],
+  ['cdia_form_wiring_gaps_2026-05-05','CDIA scoring form wiring gaps','ACTIVE',2,false,'close after S-form lands','Five S-form scoring fields are not yet wired through Snowflake → Cube → Zeno. 3 gaps in form-config registry, 2 in dbt mart. Tracker page in Confluence.',6,1],
+  ['bcbs_quality_phase5_cleanup_2026-04-28','BCBS quality migration phase 5 cleanup','ACTIVE',9,false,'delete after Phase 5 verification','Phase 5 cleanup picks up the long-tail of orphaned views referencing retired sources. 38 candidates, 12 confirmed safe to drop. Audit doc started.',5,0],
+  ['bcbs_supplemental_history_2026-04-27','BCBS supplemental history sources','ACTIVE',10,false,'7d after data committee sign-off','New supplemental history feed adds 5 tables we need to MDM-merge into the gap remediation pipeline. Schema review pending Friday.',3,1],
+  ['antipattern_atomic_registry_2026-05-01','Antipattern atomic registry','ACTIVE',6,false,'delete after registry ships','CLAUDE.md is at 200-line cap; antipatterns live across 6 files. Centralize into one ANTIPATTERNS.md with stable IDs and PreToolUse hook injection.',8,0],
+  ['cdia_audit_id_natural_key_2026-05-05','CDIA audit_id natural-key migration','ACTIVE',2,false,'close after dbt run --full-refresh in CI','Surrogate cdia_audit_id replaced with a 4-tuple natural key (patient, encounter, scoring, snapshot) for safe re-runs across full-refresh windows.',11,2],
+  ['agentbridge_bundle_readability_2026-05-05','AgentBridge bundle readability','DRAFT',2,false,'7d','The .agent/ bundle has grown to 240 files. README is stale. Need a 1-page README plus auto-generated INDEX.md keyed by adapter.',2,0],
+  ['agentbridge_cross_harness_2026-05-05','AgentBridge cross-harness compat','DRAFT',2,false,'14d to validate cursor + windsurf','.agent/ works in claude-code; need adapters for cursor, windsurf, openclaw without forking install scripts.',4,0],
+  ['memory_cascade_redesign_2026-04-15','Memory cascade protocol redesign','ACTIVE',22,false,'until graphiti node count <30','Graphiti drifted to 87 nodes (cap 30). Cascade needs recency-first gate and 5-category admission test enforced at write-time.',14,1],
+  ['cdia_data_grain_constitution_2026-05-05','CDIA data grain & constitution','ACTIVE',2,false,'close after constitution ratification','Encounter-level vs patient-month grain inconsistently applied across CDIA marts. Define and bake into HH constitution under D3.',6,0],
+  ['ccm_careplan_databricks_port_2026-05-01','CCM careplan → Databricks port','ACTIVE',6,false,'delete after Snowflake retirement','Care-plan logic in Snowflake views ported to Databricks dbt under athenahealth.athenaone.* substitutes. 14 views, 3 gaps still on Snowflake-only joins.',9,2],
+  ['session_prd_cleanup_skill_2026-05-05','Session PRD cleanup skill','ACTIVE',2,false,'7d after first 2-week sweep','/session-prd-cleanup back-fill missed body status on 3 of 5 PRDs. Add BLOCKING rule: read full PRD body before claiming "pending".',5,1],
+  ['old_zombie_diagnosis_2026-04-02','Old zombie diagnosis (legacy)','ACTIVE',35,true,'delete after R-HH07 supersedes','Pre-AP-010 attempt at zombie Zeno detection. Mostly superseded by hhdev-preflight hook + audit-zombies.sh; keep around until 7d clean.',4,0],
+  ['cdia_audit_id_patient_segment_2026-04-28','CDIA audit_id patient segment','ACTIVE',9,false,'close after segment validation','Patient-segment dimension on cdia_audit_id needs a deterministic mapping vs the legacy hash-based key.',5,1],
+  ['bcbs_evidence_dashboard_2026-05-01','BCBS evidence source dashboard','ACTIVE',6,false,'delete after dashboard ships','Visual surface for evidence-source counts by gap type. Tie into the BCBS gap remediation v2 webapp.',4,0],
+  ['bcbs_gap_webapp_phase2_2026-04-25','BCBS gap remediation webapp phase 2','ACTIVE',12,true,'delete on phase 2 close','Phase 2 webapp work paused awaiting clinical sign-off. Stale until product weighs in next sprint review.',7,1],
+  ['bcbs_detailed_gap_file_2026-04-23','BCBS detailed gap file','ACTIVE',14,true,'close after sample acceptance','Detailed CSV export per gap-type. Stale awaiting QA team review of sample exports — 3 weeks since last touch.',3,0],
+  ['cdia_deferred_blockers_phi_2026-04-28','CDIA deferred blockers (PHI / qstash)','ACTIVE',9,false,'close as items resolve','Three deferred items: PHI log scrubbing, qstash auth flow, replay-key idempotency. Tracker rows in Decisions Log.',6,2],
+  ['hcc_categorization_v2_audit_2026-04-30','HCC categorization v2 audit','ACTIVE',7,false,'close after audit signoff','Re-running HCC categorization audit against vw_hcc_assessment_categorized to confirm 100% concordance. 2 mismatches under review.',4,0],
+  ['cube_preagg_drift_2026-04-30','Cube pre-aggregation drift','ACTIVE',7,false,'close on drift detector','Cube pre-aggregations drift from raw measure values. Need a daily reconciliation check ratified into hh-validate.',5,0],
+  ['zeno_v2_dashboard_kpi_audit_2026-04-26','Zeno V2 dashboard KPI audit','ACTIVE',11,false,'close after audit','21 KPI cards across V2 dashboards — flip audit pending. Some show stale Cube measures from pre-pre-agg refactor.',6,1],
+  ['raf_workbench_v2_split_2026-04-19','RAF workbench v2 split','ACTIVE',18,true,'close after split decision','v2 workbench bundles too much. Split into per-condition modules considered but stalled awaiting RAF v2 kickoff.',3,0],
+  ['session_search_clean_flag_2026-04-11','session-search --clean flag','ACTIVE',26,false,'close after merge','--clean un-escapes JSON content for readability. Tested locally; PR pending review by Chris.',2,0],
+  ['snowflake_role_audit_2026-04-10','Snowflake role audit (sentry)','ACTIVE',27,false,'close after sentry report ships','Per-user activity report from sentry skill — DuckDB MCP loaded, 3 access anomalies flagged for review.',7,2],
+  ['claudecode_settings_consolidation_2026-05-03','Claude Code settings consolidation','DRAFT',4,false,'14d','~/.claude has drifted across settings.json + settings.local.json + per-project. Consolidate or document the precedence rules.',2,0],
+  ['hooks_doc_fetch_gate_2026-04-29','Hooks doc-fetch gate','DRAFT',8,false,'close after enforced','Before/after build hook MUST fetch hooks docs. Soft rule today; consider PreToolUse enforcement on settings.json edits.',3,0],
+  ['gemini_brainstorm_routing_2026-05-04','Gemini routing (brainstorm vs ask)','ACTIVE',3,false,'close after rule applied','Routing matrix: ask_gemini for second-opinion, gemini_brainstorm for design, gemini_debug for stuck-on-error. Document in tools/gemini.md.',4,0],
+  ['superset_dataset_owner_default_2026-05-01','Superset dataset owner default','DRAFT',6,true,'close after policy','Always include owners=[1,15] when creating datasets. Otherwise unowned datasets accumulate and break the lineage view.',2,0],
+  ['cdia_replay_idempotency_2026-04-26','CDIA replay idempotency','ACTIVE',11,false,'close after replay tests','Replay flow needs idempotency guarantee — same input = same output even after audit_id rotation. 3 test cases drafted.',5,1],
+  ['db_admin_role_separation_2026-04-05','DB admin role separation','ACTIVE',32,true,'close after role doc','Role separation between dev / qa / prod gold tier missing for 3 service accounts. Audit doc started in Confluence.',3,0],
+  ['ccm_careplan_test_harness_2026-04-21','CCM careplan test harness','ACTIVE',16,false,'close after harness ships','Need integration tests for careplan workflows — currently only unit tests on the dbt models. dbt-expectations baseline drafted.',4,0],
+  ['airflow_to_databricks_jobs_2026-04-13','Airflow → Databricks Jobs migration','DRAFT',24,true,'30d to decide','Existing Airflow DAGs converted 1-to-1 to Databricks Jobs. Stalled on permission model — service principals vs user identity.',3,0],
+  ['retry_guard_metrics_dashboard_2026-05-02','retry-guard metrics dashboard','DRAFT',5,false,'close after dashboard','3rd-call blocks per session, per tool. Useful telemetry for SIO-suggest tuning. Counted by hook log scan.',2,0],
+  ['confluence_link_drift_audit_2026-04-23','Confluence link drift audit','ACTIVE',14,false,'close after audit','Cross-references in 14 Confluence design docs may have drifted as we renamed pages. Inventory script started.',3,0],
+  ['gh_pr_template_governance_2026-04-28','GH PR template + governance','DRAFT',9,false,'close after template ships','PR description template referencing Constitution principles. Used by hh-pr-ready skill as the source-of-truth.',2,0],
+  ['weekly_billing_audit_skill_2026-05-02','/work-billing audit skill','ACTIVE',5,false,'close after 4 weeks clean','30-min block classifier into HH vs TOOLING. Live; needs 4-week audit window before promoting to canonical.',6,1],
+  ['hh_state_dashboard_v2_2026-05-05','hh-state dashboard v2 enhancements','DRAFT',2,false,'close after v2 ships','v2 ideas: orphan stack age, port owner timeline, last hh-discover timestamp inline.',3,0],
+  ['old_atlassian_cloud_id_2026-02-04','Legacy Atlassian cloud ID lookup (deprecated)','ACTIVE',92,true,'delete after rule expires','Pre-2025 Atlassian cloud-id documentation. Superseded by tools/atlassian.md rule embedded in hook injection.',1,0],
+  ['mdm_join_perf_audit_2026-04-18','MDM join performance audit','ACTIVE',19,false,'close after audit','D2 compliance joins are 2-3x slower than no-MDM baseline. Audit query plans for top 10 marts. Spark UI tabs captured.',5,0],
+  ['cube_invalidate_cache_recipe_2026-04-24','Cube invalidate-cache recipe','DRAFT',13,false,'close after recipe','When dbt model lands but Cube serves stale rows: cube_invalidate_cache + cube_refresh sequence with 90s polling.',2,0],
+  ['copilot_to_claude_migration_2026-04-06','Copilot → Claude Code migration notes','DRAFT',31,true,'close as obsolete','Stale notes from migration. Mostly captured in CLAUDE.md and skills now. Keep until Q3 review.',1,0],
+  ['raf_v2_kickoff_brainstorm_2026-04-28','RAF v2 kick-off brainstorm','DRAFT',9,false,'30d','Multi-round paired-debate output on v2 architecture choices. Decisions log seeded with 5 rows.',5,0],
+  ['cdia_phi_log_scrubber_2026-04-25','CDIA PHI log scrubber','ACTIVE',12,false,'close after scrubber lands','Any log line through CDIA pipelines must pass a PHI scrubber. 3 leak vectors identified, 1 closed.',7,1],
+  ['repo_size_audit_2026-04-29','Repo size audit (8.5GB → ?)','ACTIVE',8,false,'close after gc','databricks-dbt repo at 8.5GB. Audit large blobs, run gc, target <2GB. git-sizer report attached.',2,0],
+  ['snowsql_session_warmup_2026-04-20','snowsql session warm-up snippet','DRAFT',17,true,'close as obsolete','3-line snippet to set role/warehouse/database. Now in atlassian-mcp init — kept for legacy reference.',1,0],
+  ['vscode_settings_team_share_2026-03-29','VSCode settings team-share','DRAFT',39,true,'close after decision','Should team share .vscode/settings.json? Pros/cons noted; awaiting team poll.',2,0],
+  ['hh_dbt_freshness_dashboard_2026-05-01','HH dbt freshness dashboard','ACTIVE',6,false,'close after dashboard','Daily-staleness view per source. 23 sources, 4 currently >24h stale. Zeno dashboard linked.',3,1],
+  ['paired_debate_skill_v2_2026-04-15','/paired-debate skill v2','DRAFT',22,false,'close after v2 ships','v2 ideas: cite-or-die rule, structured argument vs counter-argument, convergence detector with similarity threshold.',4,0],
+  ['cdia_audit_id_segment_v2_2026-04-30','CDIA audit_id patient segment v2','ACTIVE',7,false,'close after v2 ships','v2 segment dimension uses patient_attribution_segment instead of legacy hash-based key. Schema migration drafted.',4,0],
+  ['hh_dashboard_doc_template_2026-05-04','hh-dashboard-doc template skeleton','DRAFT',3,false,'close after first use','Template for the hh-dashboard-doc skill output. KPI flip audit + measure enrichment sections wireframed.',2,0],
+  ['sio_health_metrics_skill_2026-05-01','/sio-health metrics skill','ACTIVE',6,false,'close after 30d data','Per-skill error rate, last-applied date, suggestion-conversion rate. Used in /sio-briefing as gate signal.',5,1],
+  ['noon_report_confluence_publish_2026-05-03','Noon report → Confluence publish','ACTIVE',4,false,'close after first week','/noon-report skill writes to Confluence Noon Report page. 2 publishes so far; format is settling.',3,0],
+  ['cdia_form_config_registry_2026-04-24','CDIA form-config registry','ACTIVE',13,false,'close after registry ships','Centralized form-field definitions feeding CDIA mart. Migrate from 3 hardcoded YAMLs into one registry.',5,0],
+  ['kanban_sidebar_design_iter_2026-05-07','PRD kanban + sidebar design iteration','DRAFT',0,false,'iterate until v0.1 ships','Two HTML mockups for VSCode sidebar + browser kanban. Theme-inheriting + editorial typography. Critique pass pending.',2,0],
+  ['hooks_circuit_breaker_audit_2026-05-02','Hooks circuit-breaker audit','ACTIVE',5,false,'close after audit','retry-guard, batch-guard, hhdev-preflight all hold their own state. Single-source-of-truth audit before adding new hooks.',3,0],
+  ['cube_yaml_lint_pre_commit_2026-04-26','Cube YAML lint pre-commit hook','DRAFT',11,false,'14d','Schema-validate Cube YAML before commit. Catches 80% of bad-deploy errors per last quarter\'s incident list.',3,0],
+  ['session_promote_admission_test_2026-05-03','session-promote admission test','ACTIVE',4,false,'close after test fires','3-test admission for Graphiti writes (universal/low-churn/behavioral). Soft rule today; codify in skill.',2,0],
+  ['old_pre_constitution_workflow_2026-01-23','Pre-constitution workflow notes (obsolete)','ACTIVE',104,true,'delete after audit','Pre-2025-Q4 workflow. Superseded by HH constitution + hh-session. Keep until Q3 cleanup.',2,0],
+  ['playwright_skill_token_audit_2026-04-29','Playwright skill token-audit','ACTIVE',8,false,'close after rule applied','browser_snapshot at 28K-178K tokens. Reroute via screenshot+interpret_image saves 95% — rule now in playwright.md.',4,0],
+];
+
+const seedArchive = [
+  ['raf_v1_pipeline_migration_2026-03-12','RAF V1 pipeline migration','RESOLVED',56,false,'graduate after 30d clean','Migrated from Snowflake demo-correct-pipeline into Databricks hcc_assessment_pipeline. CI green for 22 consecutive days.',18,4,78],
+  ['bcbs_gap_phase4_2026-03-28','BCBS gap remediation phase 4','RESOLVED',40,false,'graduate after CI green 30d','Closed out the supplemental-data ingestion path. 3 gap-closure types now flow through the remediation webapp.',11,2,64],
+  ['sio_dspy_optimizer_2026-04-08','SIO DSPy optimizer (GEPA + MIPRO)','RESOLVED',29,false,'graduate after 2 generated rules apply','sio optimize ships GEPA, MIPROv2, BootstrapFewShot. SuggestionGenerator hits 0.71 on held-out validation.',13,2,71],
+  ['hhdev_state_dashboard_2026-04-12','/hh-state dashboard','RESOLVED',25,false,'graduate after worktree adoption','Composes 5 sources (worktrees, stacks, ports, patches, PRDs, hooks) into one 80-line dashboard.',9,1,68],
+  ['confluence_style_guide_chris_2026-03-18','Confluence style guide (Chris Gainus)','RESOLVED',50,false,'graduate after 5 docs use it','8-document-type style guide. Used in 14 published HH design docs as of last week.',6,0,55],
+  ['snowflake_get_lineage_recipe_2026-03-22','Snowflake GET_LINEAGE recipe','RESOLVED',46,false,'graduate after 10d use','Canonical 5-line GET_LINEAGE call for upstream view tracing. Saves 20-30 min per dependency audit.',3,0,52],
+  ['hh_session_master_playbook_2026-03-30','/hh-session master playbook','RESOLVED',38,false,'graduate after 7d clean','THE singular HH dev session workflow. 5-phase playbook, used at start of every HH session.',12,1,82],
+  ['session_search_v2_recency_gate_2026-04-21','session-search v2 + recency gate','RESOLVED',16,false,'graduate after recency works','Replaces flag-only recency with a BLOCKING gate. SIO mining showed 614 retry-loop errors traced to non-recent matches.',7,1,69],
+  ['cdia_deidentification_audit_2026-03-15','CDIA de-identification audit','RESOLVED',53,false,'graduate after compliance sign-off','Full audit of PHI exposure across 47 CDIA views. 3 leaks closed, 2 false-positives confirmed.',9,2,74],
+  ['hh_constitution_p_series_2026-02-28','HH constitution P-series ratification','RESOLVED',68,false,'graduate post-launch','Ratified P1-P12 governance principles. Now enforced by hh-constitution-guardian agent on every dbt/Cube edit.',16,3,88],
+  ['mdm_compliance_join_recipe_2026-03-25','MDM compliance join recipe','RESOLVED',43,false,'graduate after 5 dbt PRs use it','D1/D2 compliance joins for MDM-merged athenahealth raw tables. 14 dbt models updated.',5,0,61],
+  ['superset_param_recipe_2026-04-04','Superset params JSON-string recipe','RESOLVED',33,false,'graduate after 30d','params field MUST be json.dumps()ed string. Caught 9 different chart-create 400 errors before the rule.',2,0,42],
+  ['hh_workflow_orchestrator_2026-04-01','HH workflow orchestrator (5-step)','RESOLVED',36,false,'graduate post-30d','discovery → story → scaffold → validate → PR-ready, all gated by Constitution rules.',8,1,64],
+  ['old_specstory_indexer_2026-02-12','Old SpecStory indexer (pre-rotation)','RESOLVED',84,true,'delete after replacement is graduated','Pre-rotation indexer that caused the disk-bloat incident. Superseded by hybridrag-disk-recovery.',5,1,38],
+  ['hh_audit_zombies_skill_2026-04-19','/hh-audit-zombies skill','RESOLVED',18,false,'graduate after 14d clean','Wraps audit-zombies.sh with class-based output (ALIVE/DORMANT/ORPHANED/AMBIGUOUS).',4,0,58],
+  ['playwright_token_economy_2026-03-08','Playwright token economy','RESOLVED',60,false,'graduate after 30d','browser_snapshot replaced by screenshot+interpret_image: 28K-178K → ~500 tokens.',6,1,67],
+  ['retry_guard_pre_post_split_2026-04-22','Retry-guard pre+post split','RESOLVED',15,false,'graduate after 30d clean','Hook split fixes the cascade where denied calls blocked subsequent retries.',8,1,72],
+];
+
+const seedLibrary = [
+  ['hh_constitution_2025_q4','HH dev constitution (canonical)','RESOLVED',182,false,null,'Canonical governance ruleset for Herself Health dev work. P1-P12, M1-M6, S1-S4, R-series, C1-C2, D1-D2 enforced via hooks + agents.',67,8,96,'governance, hh-dev, dbt, cube'],
+  ['cascade_memory_protocol_v2','Cascade memory protocol v2','RESOLVED',94,false,null,'Multi-hop search across session-search → HybridRAG → Graphiti. JSONL-first, recency-gated, budget-capped at <2000 tokens.',38,4,89,'memory, search, graphiti'],
+  ['prd_lifecycle_canonical','PRD lifecycle (canonical)','RESOLVED',141,false,null,'Three-tier scratch/archive/library lifecycle with triggers, cadence, ephemeral markers, decision rule, sweep policy.',54,6,93,'prd, lifecycle, governance'],
+];
+
+function makePrd(tier) {
+  return (a) => {
+    const sig = a.length === 10 ? a[9] : (a.length === 11 ? a[9] : null);
+    const tags = a.length === 11 ? a[10] : (a.length === 10 && tier === 'archive' ? '' : '');
+    return {
+      tier,
+      id: a[0], title: a[1], status: a[2], age_days: a[3], stale: a[4],
+      ephemeral: a[5], context: a[6], decisions: a[7], subagents: a[8],
+      significance: sig,
+      tags: tags || '',
+      path: `~/dev/prd/${tier}/${a[0]}.md`,
+      parent: null, children: []
+    };
+  };
+}
+
+const SCRATCH = seedScratch.map(makePrd('scratch'));
+const ARCHIVE = seedArchive.map(makePrd('archive'));
+const LIBRARY = seedLibrary.map(makePrd('library'));
+
+// Wire a couple of parent/child links so the indicator shows up in the UI
+SCRATCH[0].children = ['cdia_audit_id_natural_key_2026-05-05'];
+SCRATCH[12].parent  = 'cdia_append_only_safety_2026-05-02';
+SCRATCH[2].children = ['hhdev_state_dashboard_2026-04-12','session_prd_cleanup_skill_2026-05-05'];
+SCRATCH[3].children = ['snowflake_role_audit_2026-04-10'];
+SCRATCH[5].children = ['agentbridge_bundle_readability_2026-05-05','agentbridge_cross_harness_2026-05-05'];
+
+const ALL = [...SCRATCH, ...ARCHIVE, ...LIBRARY];
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Render                                                                 */
+/* ────────────────────────────────────────────────────────────────────── */
+function escape(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function tierGlyph(t){ return t==='scratch'?'📝':t==='archive'?'📦':'📚'; }
+function ageStr(d){
+  if (d === 0) return 'today';
+  if (d === 1) return '1d';
+  if (d < 14) return d + 'd';
+  if (d < 60) return d + 'd';
+  if (d < 365) return Math.floor(d/30) + 'mo';
+  return Math.floor(d/365) + 'y';
+}
+function ageDetailStr(d){
+  if (d === 0) return 'today';
+  if (d === 1) return '1 day ago';
+  if (d < 30) return d + ' days ago';
+  if (d < 365) { const m = Math.floor(d/30); return m + (m===1?' month':' months') + ' ago'; }
+  const y = Math.floor(d/365); return y + (y===1?' year':' years') + ' ago';
+}
+
+function renderTile(p) {
+  const stale = p.stale ? 'true' : 'false';
+  const childCount = p.children?.length || 0;
+  const parentInd = p.parent ? `<span class="has-children">↑ parent</span>` : '';
+  const childInd = childCount ? `<span class="has-children">↓ ${childCount}</span>` : parentInd;
+  const tagsHtml = p.tags
+    ? `<div class="tile-tags">${p.tags.split(',').map(t=>`<span class="tag">${escape(t.trim())}</span>`).join('')}</div>`
+    : '';
+  const trailing = p.significance !== null
+    ? `<span class="significance"><span class="sig-label">sig</span><span class="sig-bar"><span class="sig-fill" data-sig="${p.significance}"></span></span><span class="sig-num">${p.significance}</span></span>`
+    : `<a class="vs-link" href="vscode://file/${escape(p.path)}" onclick="event.stopPropagation()" title="Open in VSCode">↶ open</a>`;
+  return `<div class="tile" data-stale="${stale}" data-tier="${p.tier}" data-id="${escape(p.id)}" tabindex="0" role="button">
+    <div class="tile-meta-row">
+      <span class="age">${ageStr(p.age_days)}</span>
+      <span class="status" data-status="${p.status}">${p.status}</span>
+      ${childInd}
+    </div>
+    <h3 class="tile-title">${escape(p.title)}</h3>
+    <p class="tile-context">${escape(p.context)}</p>
+    ${tagsHtml}
+    <div class="tile-stats">
+      <span class="stat"><span class="glyph">◆</span>${p.decisions}</span>
+      <span class="stat"><span class="glyph">▣</span>${p.subagents}</span>
+      ${trailing}
+    </div>
+  </div>`;
+}
+
+function renderColumns(filter, search) {
+  const f = filter || 'all';
+  const q = (search || '').trim().toLowerCase();
+  const matches = (p) => {
+    if (f === 'stale' && !p.stale) return false;
+    if (f === 'active' && p.status !== 'ACTIVE') return false;
+    if (f === 'children' && !(p.children?.length || p.parent)) return false;
+    if (q) {
+      const hay = (p.title + ' ' + p.id + ' ' + (p.tags||'') + ' ' + p.context).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  };
+  const sFiltered = SCRATCH.filter(matches);
+  const aFiltered = ARCHIVE.filter(matches);
+  const lFiltered = LIBRARY.filter(matches);
+  document.getElementById('col-scratch').innerHTML = sFiltered.length
+    ? sFiltered.map(renderTile).join('')
+    : '<div class="empty-state">no matches</div>';
+  document.getElementById('col-archive').innerHTML = aFiltered.length
+    ? aFiltered.map(renderTile).join('')
+    : '<div class="empty-state">no matches</div>';
+  document.getElementById('col-library').innerHTML = lFiltered.length
+    ? lFiltered.map(renderTile).join('')
+    : '<div class="empty-state">no matches</div>';
+
+  // Update column counts
+  document.getElementById('ct-scratch').textContent = sFiltered.length;
+  document.getElementById('ct-archive').textContent = aFiltered.length;
+  document.getElementById('ct-library').textContent = lFiltered.length;
+  document.getElementById('total-records').textContent = sFiltered.length + aFiltered.length + lFiltered.length;
+  const sStale = sFiltered.filter(p=>p.stale).length;
+  const aStale = aFiltered.filter(p=>p.stale).length;
+  document.getElementById('ct-scratch-stale').textContent = sStale + ' stale';
+  document.getElementById('ct-archive-stale').textContent = aStale + ' stale';
+
+  wireTiles();
+  // animate sig bars in next frame
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.sig-fill').forEach(el => {
+      const pct = el.dataset.sig;
+      el.style.width = pct + '%';
+    });
+  });
+}
+
+function wireTiles() {
+  document.querySelectorAll('.tile').forEach(el => {
+    el.addEventListener('click', () => openDetail(el.dataset.id));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDetail(el.dataset.id);
+      }
+    });
+  });
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Detail panel                                                           */
+/* ────────────────────────────────────────────────────────────────────── */
+function findPrd(id) {
+  return ALL.find(x => x.id === id);
+}
+
+const sampleDecisions = [
+  ['2026-05-07', 'Phase 1 = read-only visual + copy-pasteable commands; no write-back', 'Keep surface area tiny. Lifecycle hooks live in Claude Code already; do not duplicate.'],
+  ['2026-05-07', 'Sidebar = tile grid; Kanban = browser page on bundled Express server', 'Kanban needs wide-screen real estate; the VSCode sidebar is too narrow. Browser gives multi-monitor + zoom for free.'],
+  ['2026-05-06', 'Native VSCode CSS variables; drop Webview UI Toolkit', 'Toolkit was deprecated late 2024. CSS vars are zero-dep and survive every theme switch the user makes.'],
+];
+
+function commandsFor(p) {
+  const cmds = [
+    { label: 'open',     text: `code "${p.path}"` },
+    { label: 'checkout', text: `/prd-checkout ${p.id}` },
+    { label: 'note',     text: `prd log ${p.id} note "..."` },
+    { label: 'decision', text: `prd log ${p.id} decision "..."` },
+  ];
+  if (p.tier === 'scratch')      cmds.push({ label: 'resolve',  text: `prd resolve ${p.id} --reason "..."` });
+  else if (p.tier === 'archive') cmds.push({ label: 'graduate', text: `prd graduate ${p.id}` });
+  else if (p.tier === 'library') cmds.push({ label: 'revise',   text: `prd revision ${p.id}` });
+  return cmds;
+}
+
+function openDetail(id) {
+  const p = findPrd(id);
+  if (!p) return;
+  document.querySelectorAll('.tile.selected').forEach(t => t.classList.remove('selected'));
+  const tileEl = document.querySelector(`.tile[data-id="${CSS.escape(id)}"]`);
+  if (tileEl) tileEl.classList.add('selected');
+
+  document.getElementById('d-glyph').textContent = tierGlyph(p.tier);
+  document.getElementById('d-tier-label').textContent = p.tier;
+  document.getElementById('d-age').textContent = ageDetailStr(p.age_days);
+  const dStatus = document.getElementById('d-status');
+  dStatus.textContent = p.status;
+  dStatus.setAttribute('data-status', p.status);
+  document.getElementById('d-title').textContent = p.title;
+  document.getElementById('d-id').textContent = p.id;
+
+  const cmds = commandsFor(p);
+  const linked = (p.parent || (p.children && p.children.length))
+    ? `<div class="label">Linked PRDs</div>
+       <div class="linked">
+         ${p.parent ? `<span class="arrow">↑</span><span>${escape(p.parent)}</span>` : ''}
+         ${(p.children || []).map(c => `<span class="arrow">↓</span><span>${escape(c)}</span>`).join('')}
+       </div>`
+    : '';
+
+  const decisionsTable = p.decisions
+    ? `<div class="label">Decisions log · first 3 of ${p.decisions}</div>
+       <table class="decisions-table">
+         <thead><tr><th>Date</th><th>Decision</th></tr></thead>
+         <tbody>
+           ${sampleDecisions.slice(0, 3).map(d => `<tr>
+             <td>${d[0]}</td>
+             <td><span class="d-title">${escape(d[1])}</span><span class="d-rationale">${escape(d[2])}</span></td>
+           </tr>`).join('')}
+         </tbody>
+       </table>`
+    : '';
+
+  document.getElementById('d-body').innerHTML = `
+    ${p.ephemeral ? `<div class="label">Ephemeral marker</div><div class="ephemeral-block">${escape(p.ephemeral)}</div>` : ''}
+    <div class="label">Context</div>
+    <div class="context-block">${escape(p.context)}</div>
+    <div class="label">Commands · click to copy</div>
+    <div class="cmd-list">
+      ${cmds.map(c => `<div class="cmd" data-cmd="${escape(c.text)}">
+        <span class="cmd-label">${c.label}</span>
+        <span class="cmd-text">${escape(c.text)}</span>
+        <svg class="cmd-copy" viewBox="0 0 14 14" fill="currentColor"><path d="M11.5 0H4.5L4 .5v2H1.5L1 3v10.5l.5.5h7l.5-.5V11h2.5l.5-.5V.5l-.5-.5zm-3 13H2V4h2.5v6.5l.5.5h3.5V13zm3-3H5V1h6.5v9z"/></svg>
+      </div>`).join('')}
+    </div>
+    ${linked}
+    ${decisionsTable}
+    <a class="full-link" href="vscode://file/${escape(p.path)}">↶ Open full PRD in editor</a>
+  `;
+
+  // Wire command copy
+  document.querySelectorAll('#d-body .cmd').forEach(el => {
+    el.addEventListener('click', () => copyCmd(el, el.dataset.cmd));
+  });
+
+  document.getElementById('detail').classList.add('open');
+  document.getElementById('detail').setAttribute('aria-hidden', 'false');
+  document.getElementById('scrim').classList.add('show');
+}
+function closeDetail() {
+  document.getElementById('detail').classList.remove('open');
+  document.getElementById('detail').setAttribute('aria-hidden', 'true');
+  document.getElementById('scrim').classList.remove('show');
+  document.querySelectorAll('.tile.selected').forEach(t => t.classList.remove('selected'));
+}
+function copyCmd(el, text) {
+  if (navigator.clipboard) navigator.clipboard.writeText(text);
+  const lab = el.querySelector('.cmd-label');
+  const orig = lab.textContent;
+  lab.textContent = '✓ copied';
+  lab.style.color = 'var(--status-active)';
+  setTimeout(() => { lab.textContent = orig; lab.style.color = ''; }, 900);
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Theme + filters + search + keyboard                                    */
+/* ────────────────────────────────────────────────────────────────────── */
+function setTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.body.setAttribute('data-theme', t);
+  document.getElementById('t-dark').classList.toggle('active', t === 'dark');
+  document.getElementById('t-light').classList.toggle('active', t === 'light');
+}
+
+let activeFilter = 'all';
+let activeSearch = '';
+
+document.getElementById('filter-chips').addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip');
+  if (!btn) return;
+  document.querySelectorAll('#filter-chips .chip').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  activeFilter = btn.dataset.filter;
+  renderColumns(activeFilter, activeSearch);
+});
+
+const searchInput = document.getElementById('search-input');
+searchInput.addEventListener('input', (e) => {
+  activeSearch = e.target.value;
+  renderColumns(activeFilter, activeSearch);
+});
+
+document.addEventListener('keydown', (e) => {
+  // ⌘K / Ctrl+K → focus search
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
+  // Esc → close detail or clear search
+  if (e.key === 'Escape') {
+    if (document.getElementById('detail').classList.contains('open')) {
+      closeDetail();
+    } else if (document.activeElement === searchInput && searchInput.value) {
+      searchInput.value = '';
+      activeSearch = '';
+      renderColumns(activeFilter, activeSearch);
+    } else {
+      searchInput.blur();
+    }
+    return;
+  }
+  // / → focus search (if not already in an input)
+  if (e.key === '/' && document.activeElement !== searchInput) {
+    e.preventDefault();
+    searchInput.focus();
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Toast                                                                  */
+/* ────────────────────────────────────────────────────────────────────── */
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Live ticker (refresh + uptime)                                         */
+/* ────────────────────────────────────────────────────────────────────── */
+let refreshSec = 4;
+const uptimeStart = Date.now() - (14 * 60 + 22) * 1000;
+function fmtUptime(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+}
+function fmtRefresh(s) {
+  if (s < 60) return `0:${String(s).padStart(2,'0')}`;
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}:${String(ss).padStart(2,'0')}`;
+}
+setInterval(() => {
+  refreshSec = (refreshSec + 1) % 60;
+  document.getElementById('refresh-counter').textContent = fmtRefresh(refreshSec);
+  document.getElementById('uptime').textContent = fmtUptime(Date.now() - uptimeStart);
+}, 1000);
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Boot                                                                   */
+/* ────────────────────────────────────────────────────────────────────── */
+renderColumns('all', '');
+</script>
+</body>
+</html>

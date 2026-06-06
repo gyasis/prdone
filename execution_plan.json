@@ -1,0 +1,988 @@
+{
+  "execution_plan": {
+    "phase_id": "Spec 002 \u2014 HTML Companion PRDs",
+    "waves": [
+      {
+        "wave_id": 1,
+        "strategy": "PARALLEL_SWARM",
+        "rationale": "Wave 1: 10 independent task(s) with no file conflicts",
+        "tasks": [
+          {
+            "task_id": "T001",
+            "agent_role": "Developer",
+            "instruction": "T066 Read `specs/002-html-companions/spec.md` end-to-end. Verify 10 SKILL.md fixes + 5 sub-decisions + Pharos migration are clear before implementation",
+            "file_locks": [
+              "SKILL.md",
+              "specs/002-html-companions/spec.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T066 Read `specs/002-html-companions/spec.md` end-to-end. Verify 10 SKILL.md fixes + 5 sub-decisions + Pharos migration are clear before implementation' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T002",
+            "agent_role": "Developer",
+            "instruction": "T067 [P] Create `specs/002-html-companions/checklists/` folder; mirror structure of 001-prd-visualizer",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T067 [P] Create `specs/002-html-companions/checklists/` folder; mirror structure of 001-prd-visualizer' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T003",
+            "agent_role": "Developer",
+            "instruction": "T068 [P] Create `specs/002-html-companions/data-model.md` detailing the new `companions` field, schema migration of active-prds.json, backward-compat reader rules",
+            "file_locks": [
+              "active-prds.json",
+              "specs/002-html-companions/data-model.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T068 [P] Create `specs/002-html-companions/data-model.md` detailing the new `companions` field, schema migration of active-prds.json, backward-compat reader rules' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T004",
+            "agent_role": "Developer",
+            "instruction": "T069 [P] Create `specs/002-html-companions/contracts/companions.contract.ts` (TypeScript interface) for the `Companions` type returned by `prd summary --json`",
+            "file_locks": [
+              "specs/002-html-companions/contracts/companions.contract.ts"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T069 [P] Create `specs/002-html-companions/contracts/companions.contract.ts` (TypeScript interface) for the `Companions` type returned by `prd summary --json`' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T005",
+            "agent_role": "Developer",
+            "instruction": "T070 [P] Create `specs/002-html-companions/quickstart.md` \u2014 8 manual acceptance scenarios from spec.md \u00a77",
+            "file_locks": [
+              "specs/002-html-companions/quickstart.md",
+              "spec.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T070 [P] Create `specs/002-html-companions/quickstart.md` \u2014 8 manual acceptance scenarios from spec.md \u00a77' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T007",
+            "agent_role": "Developer",
+            "instruction": "T072 [P] [US1] Author stub HTML template (\u22643 KB): doctype, semantic skeleton, masthead/hero/footer placeholders, hint comment \"Run `/design-prd <descriptor>` to fill\". Embed in CLI binary.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T072 [P] [US1] Author stub HTML template (\u22643 KB): doctype, semantic skeleton, masthead/hero/footer placeholders, hint comment \"Run `/design-prd <descriptor>` to fill\". Embed in CLI binary.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T009",
+            "agent_role": "Developer",
+            "instruction": "T074 [P] [US4] Extend `prd doctor` with paired-name check. For every `.html` in scratch/archive/library, verify a matching `.md` (same base descriptor + date) exists. Report violations + suggested rename commands. NEVER auto-rename (read-only contract).",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T074 [P] [US4] Extend `prd doctor` with paired-name check. For every `.html` in scratch/archive/library, verify a matching `.md` (same base descriptor + date) exists. Report violations + suggested rename commands. NEVER auto-rename (read-only contract).' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T010",
+            "agent_role": "Developer",
+            "instruction": "T075 [US5] Extend `prd summary --json` output: per-PRD entry adds `companions: Record<string, string> | null`. Null when no companions; object with `html` field when paired. Schema documented in `contracts/companions.contract.ts`.",
+            "file_locks": [
+              "contracts/companions.contract.ts"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T075 [US5] Extend `prd summary --json` output: per-PRD entry adds `companions: Record<string, string> | null`. Null when no companions; object with `html` field when paired. Schema documented in `contracts/companions.contract.ts`.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T011",
+            "agent_role": "Developer",
+            "instruction": "T076 [US1] Extend `prd graduate` / `archive` / `resolve` / `sweep` to move BOTH `.md` AND `.html` companion when present. Wrap in transactional rollback if either move fails.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T076 [US1] Extend `prd graduate` / `archive` / `resolve` / `sweep` to move BOTH `.md` AND `.html` companion when present. Wrap in transactional rollback if either move fails.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T013",
+            "agent_role": "Developer",
+            "instruction": "T078 [P] Unit tests: paired-name glob discovery, companion-aware move operations, doctor's violation detection, summary schema output",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 1,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T078 [P] Unit tests: paired-name glob discovery, companion-aware move operations, doctor's violation detection, summary schema output' to [x]",
+            "dependencies": []
+          }
+        ],
+        "checkpoint_after": {
+          "enabled": true,
+          "verification_criteria": "Verify all Wave 1 tasks are marked [x] in tasks.md",
+          "git_agent": "git-version-manager",
+          "memory_bank_agent": "project-bank-keeper"
+        }
+      },
+      {
+        "wave_id": 2,
+        "strategy": "PARALLEL_SWARM",
+        "rationale": "Wave 2: 10 independent task(s) with no file conflicts",
+        "tasks": [
+          {
+            "task_id": "T006",
+            "agent_role": "Developer",
+            "instruction": "T071 [US1] Add `--html` flag to `prd new` subcommand. When passed: creates BOTH `<descriptor>_<date>.md` (existing logic) AND `<descriptor>_<date>.html` (stub from embedded template). Update active-prds.json with `companions.html` path.",
+            "file_locks": [
+              "<descriptor>_<date>.md",
+              "companions.html",
+              "active-prds.json",
+              "<descriptor>_<date>.html"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": false,
+              "has_upstream_deps": true,
+              "upstream_dep_ids": [
+                "T003"
+              ],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "integration-post-deps"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T071 [US1] Add `--html` flag to `prd new` subcommand. When passed: creates BOTH `<descriptor>_<date>.md` (existing logic) AND `<descriptor>_<date>.html` (stub from embedded template). Update active-prds.json with `companions.html` path.' to [x]",
+            "dependencies": [
+              "T003"
+            ]
+          },
+          {
+            "task_id": "T014",
+            "agent_role": "Developer",
+            "instruction": "T079 Bump CLI version to v0.2.0. Update `bundle/bin/prd` if used. Update extension's bundled CLI if it ships its own copy.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T079 Bump CLI version to v0.2.0. Update `bundle/bin/prd` if used. Update extension's bundled CLI if it ships its own copy.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T015",
+            "agent_role": "Developer",
+            "instruction": "T080 Fix A (Critical) \u2014 Replace `<artifact>` output contract with Write-tool + on-disk path. Add Step 0: resolve filename `<descriptor>_<YYYY-MM-DD>.html` and target `~/dev/prd/scratch/`. Use Write tool, not artifact tags.",
+            "file_locks": [
+              "<descriptor>_<YYYY-MM-DD>.html"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T080 Fix A (Critical) \u2014 Replace `<artifact>` output contract with Write-tool + on-disk path. Add Step 0: resolve filename `<descriptor>_<YYYY-MM-DD>.html` and target `~/dev/prd/scratch/`. Use Write tool, not artifact tags.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T016",
+            "agent_role": "Developer",
+            "instruction": "T081 Fix B (Critical) \u2014 Add mandatory pre-step: \"Confirm `prd new --html <descriptor>` has been run. If not, instruct user to run it first.\"",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T081 Fix B (Critical) \u2014 Add mandatory pre-step: \"Confirm `prd new --html <descriptor>` has been run. If not, instruct user to run it first.\"' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T017",
+            "agent_role": "Developer",
+            "instruction": "T082 Fix C (Major) \u2014 Add naming-convention enforcement section. Forbidden patterns: `-design-prd` suffix, kebab-case mixing, missing date, MD and HTML with different base descriptors. Cite Pharos as the case study.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T082 Fix C (Major) \u2014 Add naming-convention enforcement section. Forbidden patterns: `-design-prd` suffix, kebab-case mixing, missing date, MD and HTML with different base descriptors. Cite Pharos as the case study.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T018",
+            "agent_role": "Developer",
+            "instruction": "T083 Fix D (Critical) \u2014 Change Step 6 from \"the agent should mention these even if it doesn't produce them\" to \"the companion MD MUST exist at the same base name; produce it via `prd new --html` BEFORE running this skill.\"",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T083 Fix D (Critical) \u2014 Change Step 6 from \"the agent should mention these even if it doesn't produce them\" to \"the companion MD MUST exist at the same base name; produce it via `prd new --html` BEFORE running this skill.\"' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T019",
+            "agent_role": "Developer",
+            "instruction": "T084 Fix F (Major) \u2014 Split sections into REQUIRED (masthead, hero, decisions, references, colophon) and CONDITIONAL (modules iff \u22653 distinct; scale tiers iff scaling is an axis; agent flow iff LLM layer; interface code iff load-bearing). Add explicit \"omit if N/A \u2014 do not fabricate.\"",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T084 Fix F (Major) \u2014 Split sections into REQUIRED (masthead, hero, decisions, references, colophon) and CONDITIONAL (modules iff \u22653 distinct; scale tiers iff scaling is an axis; agent flow iff LLM layer; interface code iff load-bearing). Add explicit \"omit if N/A \u2014 do not fabricate.\"' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T020",
+            "agent_role": "Developer",
+            "instruction": "T085 Fix G (Major) \u2014 Add aesthetic-selection heuristic: \"Schematic for infra/protocol; Editorial for long-lived architecture docs (default); Brutalist for developer tools/security; Manuscript for editorial/publication; Bauhaus for products.\" If brief doesn't signal, default Editorial.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T085 Fix G (Major) \u2014 Add aesthetic-selection heuristic: \"Schematic for infra/protocol; Editorial for long-lived architecture docs (default); Brutalist for developer tools/security; Manuscript for editorial/publication; Bauhaus for products.\" If brief doesn't signal, default Editorial.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T021",
+            "agent_role": "Developer",
+            "instruction": "T086 Fix H (Major) \u2014 Convert qualitative self-checks to grep-able structural checks. \"Hero answers what+why in 5s\" \u2192 \"hero is \u22643 paragraphs, \u226480 words total.\" \"Wordmark is BIGGEST\" \u2192 \"`.wordmark` font-size \u22656rem AND no other element exceeds it (verify by reading the stylesheet).\"",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T086 Fix H (Major) \u2014 Convert qualitative self-checks to grep-able structural checks. \"Hero answers what+why in 5s\" \u2192 \"hero is \u22643 paragraphs, \u226480 words total.\" \"Wordmark is BIGGEST\" \u2192 \"`.wordmark` font-size \u22656rem AND no other element exceeds it (verify by reading the stylesheet).\"' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T022",
+            "agent_role": "Developer",
+            "instruction": "T087 Fix I (Minor) \u2014 Replace \"captures 11 architectural decisions\" anchor with \"scales 3-20 decision cards with project complexity; do NOT pad to match example.\" Document `data-spread=\"full\"` use (for cards with code blocks + score tables).",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 2,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T087 Fix I (Minor) \u2014 Replace \"captures 11 architectural decisions\" anchor with \"scales 3-20 decision cards with project complexity; do NOT pad to match example.\" Document `data-spread=\"full\"` use (for cards with code blocks + score tables).' to [x]",
+            "dependencies": []
+          }
+        ],
+        "checkpoint_after": {
+          "enabled": true,
+          "verification_criteria": "Verify all Wave 2 tasks are marked [x] in tasks.md",
+          "git_agent": "git-version-manager",
+          "memory_bank_agent": "project-bank-keeper"
+        }
+      },
+      {
+        "wave_id": 3,
+        "strategy": "PARALLEL_SWARM",
+        "rationale": "Wave 3: 10 independent task(s) with no file conflicts",
+        "tasks": [
+          {
+            "task_id": "T008",
+            "agent_role": "Developer",
+            "instruction": "T073 [US2] Add `prd open --html <id>` subcommand. Resolves `<id>` to a PRD, locates `companions.html`, opens via priority: VSCode webview (if `VSCODE_IPC_HOOK_CLI` env detected) \u2192 `wslview` \u2192 `xdg-open` \u2192 error with helpful message.",
+            "file_locks": [
+              "companions.html"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": false,
+              "has_upstream_deps": true,
+              "upstream_dep_ids": [
+                "T006"
+              ],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "integration-post-deps"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T073 [US2] Add `prd open --html <id>` subcommand. Resolves `<id>` to a PRD, locates `companions.html`, opens via priority: VSCode webview (if `VSCODE_IPC_HOOK_CLI` env detected) \u2192 `wslview` \u2192 `xdg-open` \u2192 error with helpful message.' to [x]",
+            "dependencies": [
+              "T006"
+            ]
+          },
+          {
+            "task_id": "T012",
+            "agent_role": "Developer",
+            "instruction": "T077 [P] [US5] Backward compat: handle missing `companions` field in older active-prds.json entries \u2014 treat as `null`. No migration script required for old entries; they self-heal on next `prd doctor` run.",
+            "file_locks": [
+              "active-prds.json"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": false,
+              "has_upstream_deps": true,
+              "upstream_dep_ids": [
+                "T006",
+                "T003"
+              ],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "integration-post-deps"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T077 [P] [US5] Backward compat: handle missing `companions` field in older active-prds.json entries \u2014 treat as `null`. No migration script required for old entries; they self-heal on next `prd doctor` run.' to [x]",
+            "dependencies": [
+              "T006",
+              "T003"
+            ]
+          },
+          {
+            "task_id": "T023",
+            "agent_role": "Developer",
+            "instruction": "T088 Fix J (Minor) \u2014 Add print fallback to CSS template: `@media print { [data-reveal], .reveal { opacity: 1 !important; transform: none !important; } }`. Mention in self-check.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T088 Fix J (Minor) \u2014 Add print fallback to CSS template: `@media print { [data-reveal], .reveal { opacity: 1 !important; transform: none !important; } }`. Mention in self-check.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T024",
+            "agent_role": "Developer",
+            "instruction": "T089 Fix K (Minor) \u2014 Provide JSON-LD template inline in SKILL.md. Required: `@context: schema.org`, `@type: TechArticle`, `headline`, `datePublished`, `version`, `author`, `description`, `identifier` (matches filename without ext + date).",
+            "file_locks": [
+              "SKILL.md",
+              "schema.org",
+              "@context: schema.org"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": false,
+              "has_upstream_deps": true,
+              "upstream_dep_ids": [
+                "T001"
+              ],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "integration-post-deps"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T089 Fix K (Minor) \u2014 Provide JSON-LD template inline in SKILL.md. Required: `@context: schema.org`, `@type: TechArticle`, `headline`, `datePublished`, `version`, `author`, `description`, `identifier` (matches filename without ext + date).' to [x]",
+            "dependencies": [
+              "T001"
+            ]
+          },
+          {
+            "task_id": "T026",
+            "agent_role": "Developer",
+            "instruction": "T091 [US2] [P] Click handler for `\ud83c\udf10 HTML` icon: opens HTML in a new VSCode `WebviewPanel` with title = PRD title. Webview persistent across editor focus loss.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T091 [US2] [P] Click handler for `\ud83c\udf10 HTML` icon: opens HTML in a new VSCode `WebviewPanel` with title = PRD title. Webview persistent across editor focus loss.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T027",
+            "agent_role": "Developer",
+            "instruction": "T092 [US2] [P] Configure webview CSP: allowlist `https://fonts.googleapis.com` + `https://fonts.gstatic.com` for the Pharos-style Newsreader serif. Set `img-src 'self' data:` for embedded SVG diagrams. Document allowed origins in `src/webview/csp.ts`.",
+            "file_locks": [
+              "https://fonts.googleapis.com",
+              "https://fonts.gstatic.com",
+              "fonts.gstatic.com",
+              "fonts.googleapis.com",
+              "src/webview/csp.ts"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T092 [US2] [P] Configure webview CSP: allowlist `https://fonts.googleapis.com` + `https://fonts.gstatic.com` for the Pharos-style Newsreader serif. Set `img-src 'self' data:` for embedded SVG diagrams. Document allowed origins in `src/webview/csp.ts`.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T028",
+            "agent_role": "Developer",
+            "instruction": "T093 [US2] Add \"\u2197 Open in Browser\" button to webview header (top-right). On click: `vscode.env.openExternal(vscode.Uri.file(htmlPath))`. Tooltip explains why (full fidelity, no CSP restrictions).",
+            "file_locks": [
+              "vscode.Uri.file",
+              "vscode.env"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T093 [US2] Add \"\u2197 Open in Browser\" button to webview header (top-right). On click: `vscode.env.openExternal(vscode.Uri.file(htmlPath))`. Tooltip explains why (full fidelity, no CSP restrictions).' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T029",
+            "agent_role": "Developer",
+            "instruction": "T094 [US2] [P] Update sidebar webview (VSCode native) to also surface the icon row. Maintain --vscode-* CSS variable theme alignment.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T094 [US2] [P] Update sidebar webview (VSCode native) to also surface the icon row. Maintain --vscode-* CSS variable theme alignment.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T030",
+            "agent_role": "Developer",
+            "instruction": "T095 [US2] [P] Update browser kanban (Geist + cream/ink palette) to surface icon row. Visual style consistent with existing tile chrome.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T095 [US2] [P] Update browser kanban (Geist + cream/ink palette) to surface icon row. Visual style consistent with existing tile chrome.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T031",
+            "agent_role": "Developer",
+            "instruction": "T096 [US2] [P] Unit tests for tile-icon-row rendering (presence of icons matches `companions` field state).",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 3,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T096 [US2] [P] Unit tests for tile-icon-row rendering (presence of icons matches `companions` field state).' to [x]",
+            "dependencies": []
+          }
+        ],
+        "checkpoint_after": {
+          "enabled": true,
+          "verification_criteria": "Verify all Wave 3 tasks are marked [x] in tasks.md",
+          "git_agent": "git-version-manager",
+          "memory_bank_agent": "project-bank-keeper"
+        }
+      },
+      {
+        "wave_id": 4,
+        "strategy": "PARALLEL_SWARM",
+        "rationale": "Wave 4: 10 independent task(s) with no file conflicts",
+        "tasks": [
+          {
+            "task_id": "T025",
+            "agent_role": "Developer",
+            "instruction": "T090 [US2] Update tile renderer to read `companions` field from PRD data. Render footer icon row: `\ud83d\udcc4 MD` always; `\ud83c\udf10 HTML` when `companions.html` present; future `\ud83d\udcca PPTX`, `\ud83d\udcd5 PDF` icons follow same pattern.",
+            "file_locks": [
+              "companions.html"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": false,
+              "has_upstream_deps": true,
+              "upstream_dep_ids": [
+                "T006",
+                "T008"
+              ],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "integration-post-deps"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T090 [US2] Update tile renderer to read `companions` field from PRD data. Render footer icon row: `\ud83d\udcc4 MD` always; `\ud83c\udf10 HTML` when `companions.html` present; future `\ud83d\udcca PPTX`, `\ud83d\udcd5 PDF` icons follow same pattern.' to [x]",
+            "dependencies": [
+              "T006",
+              "T008"
+            ]
+          },
+          {
+            "task_id": "T032",
+            "agent_role": "Developer",
+            "instruction": "T097 [US3] Add `/gallery` route to express server in browser kanban (existing server at `127.0.0.1:7373+`). Static HTML shell at `kanban-static/gallery.html`.",
+            "file_locks": [
+              "kanban-static/gallery.html"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T097 [US3] Add `/gallery` route to express server in browser kanban (existing server at `127.0.0.1:7373+`). Static HTML shell at `kanban-static/gallery.html`.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T033",
+            "agent_role": "Developer",
+            "instruction": "T098 [US3] [P] Gallery layout: CSS grid of large cards (\u2265320\u00d7240px), top 50% = iframe area, bottom 50% = title + tier badge + PRD metadata.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T098 [US3] [P] Gallery layout: CSS grid of large cards (\u2265320\u00d7240px), top 50% = iframe area, bottom 50% = title + tier badge + PRD metadata.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T034",
+            "agent_role": "Developer",
+            "instruction": "T099 [US3] [P] Lazy-load iframe via IntersectionObserver: only render `<iframe src=...>` when card enters viewport. Replace with placeholder `<div>` when off-screen.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T099 [US3] [P] Lazy-load iframe via IntersectionObserver: only render `<iframe src=...>` when card enters viewport. Replace with placeholder `<div>` when off-screen.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T035",
+            "agent_role": "Developer",
+            "instruction": "T100 [US3] Concurrent-iframe cap: max 20 simultaneously rendered. Track via `Set<cardId>`. Unmount oldest when 21st enters viewport.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T100 [US3] Concurrent-iframe cap: max 20 simultaneously rendered. Track via `Set<cardId>`. Unmount oldest when 21st enters viewport.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T036",
+            "agent_role": "Developer",
+            "instruction": "T101 [US3] [P] Iframe sandbox attributes: `sandbox=\"allow-scripts allow-same-origin\"` for the design-prd HTML (IntersectionObserver inside the iframe needs scripts). Document risk in `src/kanban/gallery.ts` comment.",
+            "file_locks": [
+              "src/kanban/gallery.ts"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T101 [US3] [P] Iframe sandbox attributes: `sandbox=\"allow-scripts allow-same-origin\"` for the design-prd HTML (IntersectionObserver inside the iframe needs scripts). Document risk in `src/kanban/gallery.ts` comment.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T037",
+            "agent_role": "Developer",
+            "instruction": "T102 [US3] [P] Navigation: add \"Gallery\" link in main kanban header next to \"Scratch / Archive / Library\" tier tabs. Highlight when active.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T102 [US3] [P] Navigation: add \"Gallery\" link in main kanban header next to \"Scratch / Archive / Library\" tier tabs. Highlight when active.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T038",
+            "agent_role": "Developer",
+            "instruction": "T103 [US3] [P] Empty-state: when no HTML companions exist across all tiers, render friendly empty card with \"No HTML companions yet \u2014 run `prd new --html <descriptor>` to create one.\"",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T103 [US3] [P] Empty-state: when no HTML companions exist across all tiers, render friendly empty card with \"No HTML companions yet \u2014 run `prd new --html <descriptor>` to create one.\"' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T039",
+            "agent_role": "Developer",
+            "instruction": "T104 [US3] Manual smoke test: run with \u226530 HTML companions; gallery first-paint \u22642 s; scroll smooth at \u226530 FPS; no >100 MB main-process memory.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T104 [US3] Manual smoke test: run with \u226530 HTML companions; gallery first-paint \u22642 s; scroll smooth at \u226530 FPS; no >100 MB main-process memory.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T040",
+            "agent_role": "Developer",
+            "instruction": "T105 [US4] Inventory cross-references inside the three Pharos files (search for \"viz_tool_v1_design\", \"pharos_v1_index\", \"pharos_v1_design_journal\" within each file body). Capture as `specs/002-html-companions/pharos-migration-inventory.md`.",
+            "file_locks": [
+              "specs/002-html-companions/pharos-migration-inventory.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 4,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T105 [US4] Inventory cross-references inside the three Pharos files (search for \"viz_tool_v1_design\", \"pharos_v1_index\", \"pharos_v1_design_journal\" within each file body). Capture as `specs/002-html-companions/pharos-migration-inventory.md`.' to [x]",
+            "dependencies": []
+          }
+        ],
+        "checkpoint_after": {
+          "enabled": true,
+          "verification_criteria": "Verify all Wave 4 tasks are marked [x] in tasks.md",
+          "git_agent": "git-version-manager",
+          "memory_bank_agent": "project-bank-keeper"
+        }
+      },
+      {
+        "wave_id": 5,
+        "strategy": "PARALLEL_SWARM",
+        "rationale": "Wave 5: 9 independent task(s) with no file conflicts",
+        "tasks": [
+          {
+            "task_id": "T041",
+            "agent_role": "Developer",
+            "instruction": "T106 [US4] Author migration script `specs/002-html-companions/scripts/migrate-pharos.sh`. Performs: (a) rename 3 files to paired-name convention, (b) sed-replace internal cross-references, (c) update `~/dev/prd/scratch/.memory/active-prds.json` entry to point at new paths.",
+            "file_locks": [
+              "~/dev/prd/scratch/.memory/active-prds.json",
+              "dev/prd/scratch/.memory/active-prds.json",
+              "specs/002-html-companions/scripts/migrate-pharos.sh"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T106 [US4] Author migration script `specs/002-html-companions/scripts/migrate-pharos.sh`. Performs: (a) rename 3 files to paired-name convention, (b) sed-replace internal cross-references, (c) update `~/dev/prd/scratch/.memory/active-prds.json` entry to point at new paths.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T042",
+            "agent_role": "Developer",
+            "instruction": "T107 [US4] Dry-run migration: run script with `--dry-run`; review proposed changes; require user OK before live execution.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T107 [US4] Dry-run migration: run script with `--dry-run`; review proposed changes; require user OK before live execution.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T043",
+            "agent_role": "Developer",
+            "instruction": "T108 [US4] Execute live migration. Verify `prd doctor` reports 0 paired-name violations after. Verify prdone kanban (if running) still renders the tile correctly.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T108 [US4] Execute live migration. Verify `prd doctor` reports 0 paired-name violations after. Verify prdone kanban (if running) still renders the tile correctly.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T044",
+            "agent_role": "Developer",
+            "instruction": "T109 [P] [US4] Update spec 002 references where they cite the OLD Pharos filenames \u2014 they should now cite the NEW paired-name versions.",
+            "file_locks": [],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T109 [P] [US4] Update spec 002 references where they cite the OLD Pharos filenames \u2014 they should now cite the NEW paired-name versions.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T045",
+            "agent_role": "Developer",
+            "instruction": "T110 [P] Update `prdone/README.md` with new `prd new --html` and `prd open --html` workflow; gallery view screenshot.",
+            "file_locks": [
+              "prdone/README.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T110 [P] Update `prdone/README.md` with new `prd new --html` and `prd open --html` workflow; gallery view screenshot.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T046",
+            "agent_role": "Developer",
+            "instruction": "T111 [P] Update `prdone/CHANGELOG.md` with v0.2.0-alpha entry covering all spec-002 deliverables.",
+            "file_locks": [
+              "prdone/CHANGELOG.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T111 [P] Update `prdone/CHANGELOG.md` with v0.2.0-alpha entry covering all spec-002 deliverables.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T047",
+            "agent_role": "Developer",
+            "instruction": "T112 [P] Update `prdone/QUICKSTART.md` \"Install Skills + CLI Into Home\" command to also link `design-prd` skill into `~/.claude/skills/`.",
+            "file_locks": [
+              "prdone/QUICKSTART.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T112 [P] Update `prdone/QUICKSTART.md` \"Install Skills + CLI Into Home\" command to also link `design-prd` skill into `~/.claude/skills/`.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T048",
+            "agent_role": "Developer",
+            "instruction": "T113 Bump extension version to `0.2.0-alpha` in `package.json`. Re-package: `npm run package`. Verify .vsix contains updated CLI binary + design-prd skill.",
+            "file_locks": [
+              "package.json"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T113 Bump extension version to `0.2.0-alpha` in `package.json`. Re-package: `npm run package`. Verify .vsix contains updated CLI binary + design-prd skill.' to [x]",
+            "dependencies": []
+          },
+          {
+            "task_id": "T049",
+            "agent_role": "Developer",
+            "instruction": "T114 Run all 8 acceptance scenarios from spec 002 \u00a77. Log results in `tests/manual/spec-002-acceptance.md`.",
+            "file_locks": [
+              "tests/manual/spec-002-acceptance.md"
+            ],
+            "constitution_rules": [],
+            "testability": {
+              "isolated": true,
+              "has_upstream_deps": false,
+              "upstream_dep_ids": [],
+              "wave_position": 5,
+              "can_test_now": true,
+              "test_hint": "isolated-unit"
+            },
+            "completion_handshake": "Upon success, update tasks.md line containing 'T114 Run all 8 acceptance scenarios from spec 002 \u00a77. Log results in `tests/manual/spec-002-acceptance.md`.' to [x]",
+            "dependencies": []
+          }
+        ],
+        "checkpoint_after": {
+          "enabled": true,
+          "verification_criteria": "Verify all Wave 5 tasks are marked [x] in tasks.md",
+          "git_agent": "git-version-manager",
+          "memory_bank_agent": "project-bank-keeper"
+        }
+      }
+    ]
+  }
+}
