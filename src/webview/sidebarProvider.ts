@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { refresh as refreshPrdSource } from '../data/prdSource';
+import { listHandoffs } from '../data/handoffSource';
 import { handleWebviewAction } from '../actions/messageHandler';
 import { renderDoctorView } from './doctorView';
 import type { ExtensionResponse } from '../types';
@@ -134,6 +135,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
     this.outputChannel.appendLine(
       `[prd] refresh gen=${gen}: ${result.payload.prds.length} prds | CLI ${cliReturn - cliStart}ms | post ${sentAt - cliReturn}ms`
     );
+
+    // Resume Rail: fetch handoffs and broadcast alongside PRD data.
+    // Errors are non-fatal — a missing ~/handoff dir is normal.
+    try {
+      const handoffs = await listHandoffs();
+      // Guard: only send if this generation is still the latest (a newer
+      // refresh might have started while we awaited listHandoffs).
+      if (gen === this.refreshGen) {
+        // Slug→PRD join: for each handoff whose slug exactly matches a PRD id,
+        // upgrade prdId and resumeCmd so the frontend can show a /prd-checkout badge.
+        const prdIdSet = new Set(result.payload.prds.map(p => p.id));
+        let joined = 0;
+        for (const h of handoffs) {
+          if (prdIdSet.has(h.slug)) {
+            h.prdId = h.slug;
+            h.resumeCmd = `/prd-checkout ${h.slug}`;
+            joined++;
+          }
+        }
+        this.sendToWebview({ type: 'SYNC_HANDOFFS', payload: handoffs });
+        this.outputChannel.appendLine(`[prd] refresh gen=${gen}: ${handoffs.length} handoffs (${joined} joined to PRDs)`);
+      }
+    } catch (err) {
+      this.outputChannel.appendLine(`[prd] listHandoffs threw (non-fatal): ${(err as Error).message}`);
+    }
   }
 
   private sendToWebview(message: ExtensionResponse): void {

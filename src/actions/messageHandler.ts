@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import type { WebviewAction, ExtensionResponse } from '../types';
 import { isWebviewAction } from '../guards';
+import { archiveHandoff } from '../data/handoffSource';
 
 export interface MessageContext {
   /** Send a response back to the webview that originated the action. */
@@ -197,6 +198,23 @@ export async function handleWebviewAction(
           type: 'SHOW_ERROR',
           payload: {
             message: `Could not open HTML companion: ${action.payload.path}`,
+            raw: (err as Error).message,
+          },
+        });
+      }
+      return;
+    }
+
+    case 'ARCHIVE_HANDOFF': {
+      try {
+        await archiveHandoff(action.payload.path);
+        // Trigger a refresh so the sidebar re-fetches handoffs (and PRDs).
+        await ctx.triggerRefresh();
+      } catch (err) {
+        ctx.sendResponse({
+          type: 'SHOW_ERROR',
+          payload: {
+            message: `Could not archive handoff: ${action.payload.path}`,
             raw: (err as Error).message,
           },
         });

@@ -44,6 +44,8 @@ export function openDetail(prd: Prd, allPrds: Prd[] = [prd]): void {
     <div class="detail-section-label">Context</div>
     <div class="detail-context">${escape(prd.context)}</div>
 
+    ${renderDiarySection(prd)}
+
     <div class="detail-section-label">Network · parent · siblings · children</div>
     <div class="detail-graph-wrap">
       <div id="detail-graph" class="detail-graph"></div>
@@ -119,6 +121,22 @@ export function closeDetail(): void {
   panel.classList.remove('open');
   // Remove from DOM after the slide-out finishes (matches CSS transition duration).
   setTimeout(() => panel.remove(), 240);
+}
+
+/** Render the Dev Diary "Resume / Last pickup" section when pickup or diary_tail is present. */
+function renderDiarySection(prd: Prd): string {
+  if (!prd.pickup && !prd.diary_tail) return '';
+  const pickupBlock = prd.pickup
+    ? `<div class="detail-diary-pickup">${escape(prd.pickup)}</div>`
+    : '';
+  const tailBlock = prd.diary_tail
+    ? `<pre class="detail-diary-tail">${escape(prd.diary_tail)}</pre>`
+    : '';
+  return `
+    <div class="detail-section-label">Resume · last pickup</div>
+    ${pickupBlock}
+    ${tailBlock}
+  `;
 }
 
 /** Render all tags grouped by namespace for the drawer (full list, not capped). */

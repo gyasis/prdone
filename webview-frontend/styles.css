@@ -1297,6 +1297,37 @@ body {
   line-height: 1.5;
   color: var(--vscode-foreground);
 }
+/* Dev Diary — "Resume / Last pickup" section in the detail drawer */
+.detail-diary-pickup {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+.detail-diary-tail {
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-textBlockQuote-background);
+  border-left: 2px solid var(--vscode-widget-border);
+  padding: 6px 8px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+/* Pickup badge on tiles */
+.tile .pickup-badge {
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vscode-charts-green);
+  opacity: 0.85;
+}
 .cmd-list { display: flex; flex-direction: column; gap: 4px; }
 .cmd {
   display: grid;
@@ -1393,7 +1424,36 @@ body {
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 .tag-filter-row .chip { font-size: 11px; }
-.tag-filter-row:empty { display: none; }
+.tag-filter-row[hidden] { display: none; }
+
+/* Collapsible Tags section (collapsed by default) */
+.tag-filter-section { border-bottom: 1px solid var(--vscode-panel-border); }
+.tag-filter-section[hidden] { display: none; }
+.tag-filter-section .tag-filter-row { border-bottom: none; }
+.tag-filter-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-disabledForeground);
+}
+.tag-filter-header:hover { color: var(--vscode-foreground); }
+.tag-filter-glyph { font-size: 10px; width: 10px; }
+.tag-filter-label { font-weight: 600; }
+.tag-filter-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-ink) 22%, transparent);
+  color: var(--accent-ink);
+  font-size: 10px;
+}
 
 /* Drawer-grouped tag section */
 .drawer-tag-group {
@@ -1462,4 +1522,152 @@ body {
 .companion-icon:focus {
   outline: 1px solid var(--vscode-focusBorder);
   outline-offset: 1px;
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Resume Rail — handoff quick-resume strip at top of the sidebar        */
+/* ────────────────────────────────────────────────────────────────────── */
+.resume-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-sideBar-background);
+}
+.resume-rail[hidden] { display: none; }
+
+.resume-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-disabledForeground);
+}
+.resume-rail-header:hover { color: var(--vscode-foreground); }
+.resume-rail-glyph { font-size: 10px; width: 10px; }
+.resume-rail-label { font-weight: 600; }
+.resume-rail-count {
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-ink) 22%, transparent);
+  color: var(--accent-ink);
+  font-size: 10px;
+}
+
+.resume-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+.resume-rail-list[hidden] { display: none; }
+.resume-rail-list::-webkit-scrollbar { width: 10px; }
+.resume-rail-list::-webkit-scrollbar-track { background: transparent; }
+.resume-rail-list::-webkit-scrollbar-thumb {
+  background: var(--vscode-widget-border);
+  border-radius: 5px;
+  border: 2px solid var(--vscode-sideBar-background);
+}
+
+.resume-card {
+  padding: 7px 10px 8px 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-left: 3px solid var(--vscode-charts-purple, #b180d7);
+  border-radius: 4px;
+  transition: background 100ms;
+}
+.resume-card:hover { background: var(--vscode-list-hoverBackground); }
+
+.resume-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  color: var(--vscode-disabledForeground);
+}
+.resume-card-when { letter-spacing: 0.02em; }
+.resume-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+.resume-badge.prd {
+  background: color-mix(in srgb, var(--vscode-charts-blue) 22%, transparent);
+  color: var(--vscode-charts-blue);
+}
+.resume-badge.orphan {
+  background: color-mix(in srgb, var(--vscode-disabledForeground) 18%, transparent);
+  color: var(--vscode-disabledForeground);
+}
+
+.resume-card-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+.resume-card-focus {
+  font-size: 11px;
+  color: var(--vscode-disabledForeground);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 7px;
+}
+
+.resume-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.resume-action {
+  font-family: 'Geist', system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.resume-action:hover { background: var(--vscode-list-hoverBackground); }
+.resume-action:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 1px;
+}
+/* Primary action — the copy-resume-command button stands out */
+.resume-action.resume-copy {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+  font-weight: 500;
+}
+.resume-action.resume-copy:hover {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
 }

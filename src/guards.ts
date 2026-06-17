@@ -69,6 +69,9 @@ export function isPrd(x: unknown): x is Prd {
       if (!isAbsolutePath(val)) return false;
     }
   }
+  // Dev Diary fields — optional; when present must be string or null.
+  if (x.pickup !== undefined && x.pickup !== null && typeof x.pickup !== 'string') return false;
+  if (x.diary_tail !== undefined && x.diary_tail !== null && typeof x.diary_tail !== 'string') return false;
   return true;
 }
 
@@ -113,9 +116,27 @@ export function isWebviewAction(x: unknown): x is WebviewAction {
         typeof (x.payload as { title: unknown }).title === 'string' &&
         ((x.payload as { title: string }).title).length > 0
       );
+    case 'ARCHIVE_HANDOFF':
+      return (
+        isObject(x.payload) &&
+        isAbsolutePath((x.payload as { path: unknown }).path)
+      );
     default:
       return false;
   }
+}
+
+export function isHandoffDoc(x: unknown): x is import('./types').HandoffDoc {
+  if (!isObject(x)) return false;
+  if (!isAbsolutePath(x.path)) return false;
+  if (typeof x.filename !== 'string' || x.filename.length === 0) return false;
+  if (typeof x.slug !== 'string') return false;
+  if (typeof x.title !== 'string') return false;
+  if (typeof x.focus !== 'string') return false;
+  if (typeof x.mtimeMs !== 'number') return false;
+  if (typeof x.resumeCmd !== 'string') return false;
+  if (x.prdId !== null && typeof x.prdId !== 'string') return false;
+  return true;
 }
 
 export function isExtensionResponse(x: unknown): x is ExtensionResponse {
@@ -129,6 +150,9 @@ export function isExtensionResponse(x: unknown): x is ExtensionResponse {
     if (typeof p.message !== 'string') return false;
     if (p.raw !== undefined && typeof p.raw !== 'string') return false;
     return true;
+  }
+  if (x.type === 'SYNC_HANDOFFS') {
+    return Array.isArray(x.payload) && x.payload.every(isHandoffDoc);
   }
   return false;
 }

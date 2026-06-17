@@ -3,6 +3,8 @@
 // Every cross-process boundary in the codebase MUST validate incoming data
 // against the corresponding type guard in ./guards.ts before use (FR-016).
 
+import type { HandoffDoc } from './data/handoffSource';
+
 export type Tier = 'scratch' | 'archive' | 'library';
 
 export type Status = 'ACTIVE' | 'RESOLVED' | 'DRAFT';
@@ -37,6 +39,10 @@ export interface Prd {
    * Source: `prd summary --json` (CLI scans tier dir for paired-name siblings).
    */
   companions?: Companions | null;
+  /** Latest "Next pickup" breadcrumb from the PRD's Dev Diary. Null when no diary entry exists. */
+  pickup?: string | null;
+  /** Most recent diary session block (~1200 chars). Null when no diary entry exists. */
+  diary_tail?: string | null;
 }
 
 /**
@@ -68,11 +74,16 @@ export type WebviewAction =
    * The handler reads the file, wraps it in a CSP-bounded shell with a
    * top-right "↗ Open in Browser" button, and presents it as a new tab.
    */
-  | { type: 'OPEN_HTML_COMPANION'; payload: { path: string; title: string } };
+  | { type: 'OPEN_HTML_COMPANION'; payload: { path: string; title: string } }
+  | { type: 'ARCHIVE_HANDOFF'; payload: { path: string } };
 
 export type ExtensionResponse =
   | { type: 'SYNC_DATA'; payload: Prd[] }
-  | { type: 'SHOW_ERROR'; payload: { message: string; raw?: string } };
+  | { type: 'SHOW_ERROR'; payload: { message: string; raw?: string } }
+  | { type: 'SYNC_HANDOFFS'; payload: HandoffDoc[] };
+
+// Re-export HandoffDoc so consumers can import from types rather than directly from handoffSource.
+export type { HandoffDoc };
 
 export type KanbanApiPayload =
   | { ok: true; prds: Prd[] }
