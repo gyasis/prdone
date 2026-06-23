@@ -144,7 +144,7 @@ it's a purpose-written, step-by-step install + usage guide for autonomous operat
 
 ## The VSCode extension (optional)
 
-`prdone` is also a **read-only VSCode extension** ("PRD Visualizer", v0.2.0-alpha) that
+`prdone` is also a **read-only VSCode extension** ("PRD Visualizer", v0.2.0) that
 renders the CLI's output as three surfaces. It is **not required** to use the CLI or skills.
 
 - **Sidebar tile grid** — in-editor, inherits VSCode's theme via `--vscode-*` CSS variables
@@ -285,4 +285,4 @@ Uninstall the VSCode extension via the Extensions panel, or
 
 ## License
 
-UNLICENSED — single-developer personal tooling. Use at your own discretion.
+[MIT](LICENSE) © 2026 Gyasi Sutton.

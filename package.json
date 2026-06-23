@@ -2,10 +2,10 @@
   "name": "prdone",
   "displayName": "PRD Visualizer",
   "description": "Read-only sidebar grid + browser kanban for the prd lifecycle CLI. Renders ~85 PRDs across scratch/archive/library tiers with copy-pasteable Claude Code commands.",
-  "version": "0.2.0-alpha",
+  "version": "0.2.1",
   "publisher": "gyasis",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/gyasis/prdone.git"
