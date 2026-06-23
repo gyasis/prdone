@@ -5,7 +5,7 @@
 // This file lands here in wave 3 with the sidebar path operational so US1+US2
 // flow end-to-end; kanban renderer joins later.
 
-import type { Prd } from '../src/types';
+import type { Prd, HandoffDoc, StartPathInfo } from '../src/types';
 import { isExtensionResponse, isKanbanApiPayload } from '../src/guards';
 import { renderTileGrid, setVSCodeApi, type VSCodeApi } from './tileGrid';
 import { applyFilters, defaultFilterState, type FilterState } from './filters';
@@ -82,8 +82,32 @@ function bootSidebar(): void {
           <button class="chip" data-mode="tier" data-tier="library">📚 <span class="chip-count" data-count="library">—</span></button>
         </div>
       </div>
-      <div class="tag-filter-row" id="tag-filter-row"></div>
+      <div class="tag-filter-section" id="tag-filter-section" hidden>
+        <div class="tag-filter-header" id="tag-filter-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="tag-filter-row">
+          <span class="tag-filter-glyph">▸</span>
+          <span class="tag-filter-label">Tags</span>
+          <span class="tag-filter-count" id="tag-filter-count">0</span>
+        </div>
+        <div class="tag-filter-row" id="tag-filter-row" hidden></div>
+      </div>
       <div class="counts" id="counts"><span id="count-total">—</span> · <span id="count-stale">—</span> stale · <button id="sort-toggle" class="sort" type="button" aria-label="Toggle sort by age" title="Toggle sort by age">sort: age <span id="sort-glyph">↓</span></button></div>
+      <section class="start-rail" id="start-rail" aria-label="Start here" hidden>
+        <div class="start-rail-header" id="start-rail-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="start-rail-list">
+          <span class="start-rail-glyph">▸</span>
+          <span class="start-rail-label">Start here</span>
+          <span class="start-rail-reco" id="start-rail-reco"></span>
+          <span class="start-rail-warn" id="start-rail-warn" hidden title="Your workspace is opened to a subfolder of the project root — launch Claude from the root instead.">⚠ subfolder</span>
+        </div>
+        <ul class="start-rail-list" id="start-rail-list" role="list" hidden></ul>
+      </section>
+      <section class="resume-rail" id="resume-rail" aria-label="Resume Rail" hidden>
+        <div class="resume-rail-header" id="resume-rail-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="resume-rail-list">
+          <span class="resume-rail-glyph">▸</span>
+          <span class="resume-rail-label">Resume Rail</span>
+          <span class="resume-rail-count" id="resume-rail-count">0</span>
+        </div>
+        <ul class="resume-rail-list" id="resume-rail-list" role="list" hidden></ul>
+      </section>
       <div class="tiles" id="tiles"></div>
       <div id="error-banner" class="error-banner" hidden></div>
     </div>`;
@@ -91,6 +115,189 @@ function bootSidebar(): void {
   // Local state.
   let allPrds: Prd[] = [];
   let filterState: FilterState = defaultFilterState();
+
+  // Resume Rail state — collapsed by default.
+  let resumeRailOpen = false;
+
+  // Resume Rail elements.
+  const resumeRailSection = document.getElementById('resume-rail')!;
+  const resumeRailList = document.getElementById('resume-rail-list')!;
+  const resumeRailCount = document.getElementById('resume-rail-count')!;
+  const resumeRailToggle = document.getElementById('resume-rail-toggle')!;
+
+  function escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    } as Record<string, string>)[c] ?? c);
+  }
+
+  function fmtWhen(ms: number): string {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return '';
+    const diff = Date.now() - ms;
+    const min = 60_000, hr = 3_600_000, day = 86_400_000;
+    if (diff < hr) return `${Math.max(1, Math.round(diff / min))}m ago`;
+    if (diff < day) return `${Math.round(diff / hr)}h ago`;
+    if (diff < 7 * day) return `${Math.round(diff / day)}d ago`;
+    const d = new Date(ms);
+    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    return `${mon} ${d.getDate()}`;
+  }
+
+  function renderResumeRail(handoffs: HandoffDoc[]): void {
+    resumeRailCount.textContent = String(handoffs.length);
+    if (handoffs.length === 0) {
+      resumeRailSection.hidden = true;
+      return;
+    }
+    resumeRailSection.hidden = false;
+
+    resumeRailList.innerHTML = handoffs.map(h => {
+      const displayFocus = h.focus.length > 120
+        ? h.focus.slice(0, 120) + '…'
+        : h.focus;
+      const badge = h.prdId
+        ? `<span class="resume-badge prd" title="Maps to PRD ${escapeHtml(h.prdId)}">PRD</span>`
+        : `<span class="resume-badge orphan" title="No matching PRD">orphan</span>`;
+      return `<li class="resume-card" role="listitem">
+        <div class="resume-card-meta">
+          <span class="resume-card-when">${escapeHtml(fmtWhen(h.capturedMs))}</span>
+          ${badge}
+        </div>
+        <div class="resume-card-title">${escapeHtml(h.title)}</div>
+        ${displayFocus ? `<div class="resume-card-focus">${escapeHtml(displayFocus)}</div>` : ''}
+        <div class="resume-card-actions">
+          <button type="button" class="resume-action resume-copy" data-cmd="${escapeHtml(h.resumeCmd)}" title="Copy resume command to clipboard">Copy resume cmd</button>
+          ${h.startRoot ? `<button type="button" class="resume-action resume-cd" data-cmd='cd "${escapeAttr(h.startRoot)}"' title="Copy: cd &quot;${escapeAttr(h.startRoot)}&quot; — launch this handoff from its project root">Copy cd</button>` : ''}
+          <button type="button" class="resume-action resume-open" data-path="${escapeHtml(h.path)}" title="Open handoff file in editor">Open</button>
+          <button type="button" class="resume-action resume-archive" data-path="${escapeHtml(h.path)}" title="Archive this handoff">Archive</button>
+        </div>
+        ${h.startRoot ? `<div class="resume-card-root" title="${escapeAttr(h.startRoot)}">└ cd "${escapeHtml(tildify(h.startRoot))}"</div>` : ''}
+      </li>`;
+    }).join('');
+
+    // Wire button handlers.
+    resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd ?? '';
+        api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
+      });
+    });
+    resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-cd').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd ?? '';
+        if (cmd) api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
+      });
+    });
+    resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-open').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = btn.dataset.path ?? '';
+        api?.postMessage({ type: 'OPEN_FILE', payload: { path: p } });
+      });
+    });
+    resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-archive').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = btn.dataset.path ?? '';
+        api?.postMessage({ type: 'ARCHIVE_HANDOFF', payload: { path: p } });
+      });
+    });
+  }
+
+  // Toggle collapse/expand of the Resume Rail list.
+  function toggleResumeRail(): void {
+    resumeRailOpen = !resumeRailOpen;
+    resumeRailList.hidden = !resumeRailOpen;
+    resumeRailToggle.setAttribute('aria-expanded', String(resumeRailOpen));
+    const glyph = resumeRailToggle.querySelector('.resume-rail-glyph');
+    if (glyph) glyph.textContent = resumeRailOpen ? '▾' : '▸';
+  }
+
+  resumeRailToggle.addEventListener('click', toggleResumeRail);
+  resumeRailToggle.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleResumeRail(); }
+  });
+
+  // ── Start-here rail ──────────────────────────────────────────────────────
+  // Ranked "launch Claude from HERE" suggestion for the current workspace, so
+  // the user stops kicking work off from the wrong subfolder. Suggestion only —
+  // copies `cd "<path>"`, never executes.
+  const startRailSection = document.getElementById('start-rail')!;
+  const startRailList = document.getElementById('start-rail-list')!;
+  const startRailReco = document.getElementById('start-rail-reco')!;
+  const startRailWarn = document.getElementById('start-rail-warn')!;
+  const startRailToggle = document.getElementById('start-rail-toggle')!;
+  let startRailOpen = false;
+
+  /** Abbreviate the user's home prefix to `~` for compact display. Full path is still copied. */
+  function tildify(p: string): string {
+    return p.replace(/^\/(?:home|Users)\/[^/]+/, '~');
+  }
+
+  function renderStartRail(info: StartPathInfo): void {
+    const cands = info.candidates ?? [];
+    const top = cands[0];
+    // Nothing useful to suggest when the only candidate is the current folder
+    // (no git repo, no PRD-owner sentinel) and we're not below a root.
+    const meaningful = cands.length > 1 || (!!top && top.kind !== 'current') || info.belowRoot;
+    if (!meaningful) {
+      startRailSection.hidden = true;
+      return;
+    }
+    startRailSection.hidden = false;
+
+    startRailReco.textContent = top ? `${top.label} · ${tildify(top.path)}` : '';
+    startRailWarn.hidden = !info.belowRoot;
+
+    startRailList.innerHTML = cands.map((c, i) => {
+      const isReco = i === 0;
+      const isCurrent = c.kind === 'current';
+      const star = isReco ? ' <span class="start-reco-star" title="Recommended">⭐</span>' : '';
+      const here = isCurrent && info.belowRoot
+        ? ' <span class="start-here-flag" title="Where your workspace is opened">⚠ you are here</span>'
+        : (isCurrent ? ' <span class="start-here-flag" title="Where your workspace is opened">you are here</span>' : '');
+      return `<li class="start-card${isReco ? ' reco' : ''}${isCurrent ? ' current' : ''}" role="listitem">
+        <div class="start-card-row">
+          <span class="start-card-kind">${escapeHtml(c.label)}${star}${here}</span>
+          <button type="button" class="start-action start-copy" data-cmd='cd "${escapeAttr(c.path)}"' title="Copy: cd &quot;${escapeAttr(c.path)}&quot;">Copy cd</button>
+        </div>
+        <div class="start-card-path" title="${escapeAttr(c.path)}">${escapeHtml(tildify(c.path))}</div>
+      </li>`;
+    }).join('');
+
+    startRailList.querySelectorAll<HTMLButtonElement>('.start-copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd ?? '';
+        if (cmd) api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
+      });
+    });
+  }
+
+  function toggleStartRail(): void {
+    startRailOpen = !startRailOpen;
+    startRailList.hidden = !startRailOpen;
+    startRailToggle.setAttribute('aria-expanded', String(startRailOpen));
+    const glyph = startRailToggle.querySelector('.start-rail-glyph');
+    if (glyph) glyph.textContent = startRailOpen ? '▾' : '▸';
+  }
+  startRailToggle.addEventListener('click', toggleStartRail);
+  startRailToggle.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleStartRail(); }
+  });
+
+  // Toggle collapse/expand of the Tags section (collapsed by default).
+  let tagFilterOpen = false;
+  const tagFilterToggle = document.getElementById('tag-filter-toggle')!;
+  const tagFilterRowEl = document.getElementById('tag-filter-row')!;
+  function toggleTagFilter(): void {
+    tagFilterOpen = !tagFilterOpen;
+    tagFilterRowEl.hidden = !tagFilterOpen;
+    tagFilterToggle.setAttribute('aria-expanded', String(tagFilterOpen));
+    const glyph = tagFilterToggle.querySelector('.tag-filter-glyph');
+    if (glyph) glyph.textContent = tagFilterOpen ? '▾' : '▸';
+  }
+  tagFilterToggle.addEventListener('click', toggleTagFilter);
+  tagFilterToggle.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleTagFilter(); }
+  });
 
   const tilesEl = document.getElementById('tiles')!;
   const searchEl = document.getElementById('search') as HTMLInputElement;
@@ -277,6 +484,11 @@ function bootSidebar(): void {
       }
     }
     row.innerHTML = parts.join('');
+    // Show the collapsible Tags section only when there are tags; reflect the count.
+    const tagSection = document.getElementById('tag-filter-section');
+    const tagCount = document.getElementById('tag-filter-count');
+    if (tagSection) tagSection.hidden = parts.length === 0;
+    if (tagCount) tagCount.textContent = String(parts.length);
     row.querySelectorAll<HTMLButtonElement>('.chip[data-ns]').forEach(btn => {
       btn.addEventListener('click', () => {
         const ns = btn.dataset.ns!;
@@ -297,7 +509,7 @@ function bootSidebar(): void {
     } as Record<string, string>)[c] ?? c);
   }
 
-  // Listen for SYNC_DATA / SHOW_ERROR.
+  // Listen for SYNC_DATA / SHOW_ERROR / SYNC_HANDOFFS.
   window.addEventListener('message', (event) => {
     const msg = event.data;
     if (!isExtensionResponse(msg)) return;
@@ -321,6 +533,10 @@ function bootSidebar(): void {
       document.querySelector('.counts')?.classList.add('outdated');
       // Tiles remain visible per FR-004 but get the same outdated marker.
       tilesEl.classList.add('outdated');
+    } else if (msg.type === 'SYNC_HANDOFFS') {
+      renderResumeRail(msg.payload);
+    } else if (msg.type === 'SYNC_START_PATH') {
+      renderStartRail(msg.payload);
     }
   });
 

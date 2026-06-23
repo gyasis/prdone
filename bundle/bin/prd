@@ -2991,6 +2991,25 @@ def extract(path: pathlib.Path, tier: str):
             companions[cext] = str(sibling)
     companions_field = companions if companions else None
 
+    # Dev Diary surfacing (added 2026-06-17) — make resume-state visible to consumers
+    # (prdone, /prd-checkout). `prd diary` always writes a fixed "## 10. Dev Diary"
+    # section in this file, so emitting its tail here catches every diary write.
+    pickup = None
+    diary_tail = None
+    dm = re.search(r'^##\s+10\.\s+Dev Diary\s*\n(.*)\Z', text, re.M | re.S)
+    if dm:
+        diary_body = dm.group(1)
+        nxt = re.search(r'\n##\s+\d', diary_body)  # stop at any later top-level section
+        if nxt:
+            diary_body = diary_body[:nxt.start()]
+        blocks = diary_body.split("### Session ")
+        if len(blocks) > 1:
+            diary_tail = ("### Session " + blocks[-1].rstrip())[:1200]
+        pks = [m.strip() for m in re.findall(r'\*\*Next pickup:\*\*\s*(.+)', diary_body)]
+        pks = [p for p in pks if p and p != "<TBD>"]
+        if pks:
+            pickup = pks[-1][:280]
+
     return {
         "tier": tier,
         "id": path.stem,
@@ -3006,6 +3025,8 @@ def extract(path: pathlib.Path, tier: str):
         "tags": fm_tags,
         "stale": is_stale,
         "companions": companions_field,
+        "pickup": pickup,
+        "diary_tail": diary_tail,
         "_parent_raw": parent,
         "_children_raw": children,
         "_relations_raw": relations,

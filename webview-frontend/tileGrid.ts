@@ -156,6 +156,9 @@ function renderTile(prd: Prd, idx: number): string {
     : '';
   const staleTag = prd.stale ? `<span class="stale-tag">stale</span>` : '';
   const pinBadge = prd.pinned ? `<span class="pin-badge" title="Active PRD in this workspace">📌</span>` : '';
+  const pickupBadge = prd.pickup
+    ? `<span class="pickup-badge" title="Resume: ${escape(prd.pickup)}">↻ pickup</span>`
+    : '';
   const companionRow = renderCompanionIconRow(prd);
 
   return `
@@ -166,6 +169,7 @@ function renderTile(prd: Prd, idx: number): string {
         <span class="age">${ageStr(prd.age_days)}</span>
         <span class="pill ${statusPill(prd.status)}">${prd.status}</span>
         ${staleTag}
+        ${pickupBadge}
       </div>
       <div class="title">${escape(prd.title)}</div>
       ${renderTileTags(prd)}
