@@ -9,6 +9,7 @@ import { refresh as refreshPrdSource } from '../data/prdSource';
 import { listHandoffs } from '../data/handoffSource';
 import { handleWebviewAction } from '../actions/messageHandler';
 import { renderDoctorView } from './doctorView';
+import { resolveStartPath } from '../lib/resolveStartPath';
 import type { ExtensionResponse } from '../types';
 
 export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -136,6 +137,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
       `[prd] refresh gen=${gen}: ${result.payload.prds.length} prds | CLI ${cliReturn - cliStart}ms | post ${sentAt - cliReturn}ms`
     );
 
+    // Start-path suggestion: resolve the ranked "start here" candidates for the
+    // current workspace folder and broadcast. Non-fatal — a missing workspace
+    // (no folder open) simply yields no suggestion. Gen-guarded like the rest.
+    try {
+      const wsFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const startInfo = await resolveStartPath(wsFolder);
+      if (gen === this.refreshGen && startInfo) {
+        this.sendToWebview({ type: 'SYNC_START_PATH', payload: startInfo });
+        this.outputChannel.appendLine(
+          `[prd] refresh gen=${gen}: start-path from=${startInfo.from} → ${startInfo.candidates[0]?.path ?? '(none)'} belowRoot=${startInfo.belowRoot}`
+        );
+      }
+    } catch (err) {
+      this.outputChannel.appendLine(`[prd] resolveStartPath threw (non-fatal): ${(err as Error).message}`);
+    }
+
     // Resume Rail: fetch handoffs and broadcast alongside PRD data.
     // Errors are non-fatal — a missing ~/handoff dir is normal.
     try {
@@ -154,6 +171,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
             joined++;
           }
         }
+
+        // Per-handoff start root: resolve each handoff's parsed projectHint to a
+        // recommended launch directory (its git/worktree root). Cached per hint
+        // dir so N handoffs in the same project cost one git resolution, not N.
+        const startRootCache = new Map<string, string | null>();
+        for (const h of handoffs) {
+          if (!h.projectHint) continue;
+          if (!startRootCache.has(h.projectHint)) {
+            try {
+              const info = await resolveStartPath(h.projectHint);
+              startRootCache.set(h.projectHint, info?.candidates[0]?.path ?? null);
+            } catch {
+              startRootCache.set(h.projectHint, null);
+            }
+          }
+          h.startRoot = startRootCache.get(h.projectHint) ?? null;
+        }
+
+        // A newer refresh may have started while we awaited the resolutions.
+        if (gen !== this.refreshGen) return;
         this.sendToWebview({ type: 'SYNC_HANDOFFS', payload: handoffs });
         this.outputChannel.appendLine(`[prd] refresh gen=${gen}: ${handoffs.length} handoffs (${joined} joined to PRDs)`);
       }

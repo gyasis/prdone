@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { extractProjectHint } from '../lib/resolveStartPath';
 
 export interface HandoffDoc {
   path: string;
@@ -13,6 +14,10 @@ export interface HandoffDoc {
   capturedMs: number;
   resumeCmd: string;
   prdId: string | null;
+  /** Best-effort project directory parsed from the handoff body (Worktree line / first dev path). null when none. */
+  projectHint: string | null;
+  /** Recommended start root for this handoff, resolved from projectHint by the sidebar provider. null until/unless resolved. */
+  startRoot: string | null;
 }
 
 export async function listHandoffs(): Promise<HandoffDoc[]> {
@@ -114,6 +119,8 @@ export async function listHandoffs(): Promise<HandoffDoc[]> {
         capturedMs,
         resumeCmd: `read the handoff at ${filePath} and continue`,
         prdId: null,
+        projectHint: extractProjectHint(content),
+        startRoot: null,
       };
     })
   );

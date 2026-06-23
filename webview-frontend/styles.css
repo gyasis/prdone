@@ -1671,3 +1671,130 @@ body {
 .resume-action.resume-copy:hover {
   background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
 }
+/* Per-handoff "cd into project root" — secondary, monospace path hint below the actions */
+.resume-card-root {
+  margin-top: 5px;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  color: var(--vscode-disabledForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+/*  Start-here Rail — ranked "launch Claude from this folder" suggestion   */
+/* ────────────────────────────────────────────────────────────────────── */
+.start-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--vscode-widget-border);
+  background: var(--vscode-sideBar-background);
+}
+.start-rail[hidden] { display: none; }
+
+.start-rail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--vscode-disabledForeground);
+}
+.start-rail-header:hover { color: var(--vscode-foreground); }
+.start-rail-glyph { font-size: 10px; width: 10px; flex: 0 0 auto; }
+.start-rail-label { font-weight: 600; flex: 0 0 auto; }
+.start-rail-reco {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 10.5px;
+  color: var(--vscode-foreground);
+  opacity: 0.85;
+}
+.start-rail-warn {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 9.5px;
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 24%, transparent);
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.start-rail-warn[hidden] { display: none; }
+
+.start-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.start-rail-list[hidden] { display: none; }
+
+.start-card {
+  padding: 6px 10px 7px 12px;
+  background: var(--vscode-textBlockQuote-background);
+  border: 1px solid var(--vscode-widget-border);
+  border-left: 3px solid var(--vscode-widget-border);
+  border-radius: 4px;
+}
+.start-card.reco { border-left-color: var(--vscode-charts-green, #89d185); }
+.start-card.current { border-left-color: var(--vscode-disabledForeground); }
+.start-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.start-card-kind {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-foreground);
+}
+.start-reco-star { font-size: 10px; }
+.start-here-flag {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 9.5px;
+  color: var(--vscode-editorWarning-foreground, #cca700);
+}
+.start-card-path {
+  margin-top: 3px;
+  font-family: "SF Mono", Monaco, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--vscode-disabledForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-action {
+  flex: 0 0 auto;
+  font-family: 'Geist', system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 1px solid var(--vscode-button-background);
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.start-action:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.start-action:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }

@@ -4,6 +4,7 @@
 // against the corresponding type guard in ./guards.ts before use (FR-016).
 
 import type { HandoffDoc } from './data/handoffSource';
+import type { StartPathInfo, StartCandidate, StartKind } from './lib/resolveStartPath';
 
 export type Tier = 'scratch' | 'archive' | 'library';
 
@@ -80,10 +81,14 @@ export type WebviewAction =
 export type ExtensionResponse =
   | { type: 'SYNC_DATA'; payload: Prd[] }
   | { type: 'SHOW_ERROR'; payload: { message: string; raw?: string } }
-  | { type: 'SYNC_HANDOFFS'; payload: HandoffDoc[] };
+  | { type: 'SYNC_HANDOFFS'; payload: HandoffDoc[] }
+  /** Ranked "start here" suggestion for the current workspace (git/worktree root, prd owner, current). */
+  | { type: 'SYNC_START_PATH'; payload: StartPathInfo };
 
 // Re-export HandoffDoc so consumers can import from types rather than directly from handoffSource.
 export type { HandoffDoc };
+// Re-export start-path types so guards / frontend import from types.
+export type { StartPathInfo, StartCandidate, StartKind };
 
 export type KanbanApiPayload =
   | { ok: true; prds: Prd[] }

@@ -5,7 +5,7 @@
 // This file lands here in wave 3 with the sidebar path operational so US1+US2
 // flow end-to-end; kanban renderer joins later.
 
-import type { Prd, HandoffDoc } from '../src/types';
+import type { Prd, HandoffDoc, StartPathInfo } from '../src/types';
 import { isExtensionResponse, isKanbanApiPayload } from '../src/guards';
 import { renderTileGrid, setVSCodeApi, type VSCodeApi } from './tileGrid';
 import { applyFilters, defaultFilterState, type FilterState } from './filters';
@@ -91,6 +91,15 @@ function bootSidebar(): void {
         <div class="tag-filter-row" id="tag-filter-row" hidden></div>
       </div>
       <div class="counts" id="counts"><span id="count-total">—</span> · <span id="count-stale">—</span> stale · <button id="sort-toggle" class="sort" type="button" aria-label="Toggle sort by age" title="Toggle sort by age">sort: age <span id="sort-glyph">↓</span></button></div>
+      <section class="start-rail" id="start-rail" aria-label="Start here" hidden>
+        <div class="start-rail-header" id="start-rail-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="start-rail-list">
+          <span class="start-rail-glyph">▸</span>
+          <span class="start-rail-label">Start here</span>
+          <span class="start-rail-reco" id="start-rail-reco"></span>
+          <span class="start-rail-warn" id="start-rail-warn" hidden title="Your workspace is opened to a subfolder of the project root — launch Claude from the root instead.">⚠ subfolder</span>
+        </div>
+        <ul class="start-rail-list" id="start-rail-list" role="list" hidden></ul>
+      </section>
       <section class="resume-rail" id="resume-rail" aria-label="Resume Rail" hidden>
         <div class="resume-rail-header" id="resume-rail-toggle" role="button" tabindex="0" aria-expanded="false" aria-controls="resume-rail-list">
           <span class="resume-rail-glyph">▸</span>
@@ -123,6 +132,7 @@ function bootSidebar(): void {
   }
 
   function fmtWhen(ms: number): string {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return '';
     const diff = Date.now() - ms;
     const min = 60_000, hr = 3_600_000, day = 86_400_000;
     if (diff < hr) return `${Math.max(1, Math.round(diff / min))}m ago`;
@@ -157,9 +167,11 @@ function bootSidebar(): void {
         ${displayFocus ? `<div class="resume-card-focus">${escapeHtml(displayFocus)}</div>` : ''}
         <div class="resume-card-actions">
           <button type="button" class="resume-action resume-copy" data-cmd="${escapeHtml(h.resumeCmd)}" title="Copy resume command to clipboard">Copy resume cmd</button>
+          ${h.startRoot ? `<button type="button" class="resume-action resume-cd" data-cmd='cd "${escapeAttr(h.startRoot)}"' title="Copy: cd &quot;${escapeAttr(h.startRoot)}&quot; — launch this handoff from its project root">Copy cd</button>` : ''}
           <button type="button" class="resume-action resume-open" data-path="${escapeHtml(h.path)}" title="Open handoff file in editor">Open</button>
           <button type="button" class="resume-action resume-archive" data-path="${escapeHtml(h.path)}" title="Archive this handoff">Archive</button>
         </div>
+        ${h.startRoot ? `<div class="resume-card-root" title="${escapeAttr(h.startRoot)}">└ cd "${escapeHtml(tildify(h.startRoot))}"</div>` : ''}
       </li>`;
     }).join('');
 
@@ -168,6 +180,12 @@ function bootSidebar(): void {
       btn.addEventListener('click', () => {
         const cmd = btn.dataset.cmd ?? '';
         api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
+      });
+    });
+    resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-cd').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd ?? '';
+        if (cmd) api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
       });
     });
     resumeRailList.querySelectorAll<HTMLButtonElement>('.resume-open').forEach(btn => {
@@ -196,6 +214,73 @@ function bootSidebar(): void {
   resumeRailToggle.addEventListener('click', toggleResumeRail);
   resumeRailToggle.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleResumeRail(); }
+  });
+
+  // ── Start-here rail ──────────────────────────────────────────────────────
+  // Ranked "launch Claude from HERE" suggestion for the current workspace, so
+  // the user stops kicking work off from the wrong subfolder. Suggestion only —
+  // copies `cd "<path>"`, never executes.
+  const startRailSection = document.getElementById('start-rail')!;
+  const startRailList = document.getElementById('start-rail-list')!;
+  const startRailReco = document.getElementById('start-rail-reco')!;
+  const startRailWarn = document.getElementById('start-rail-warn')!;
+  const startRailToggle = document.getElementById('start-rail-toggle')!;
+  let startRailOpen = false;
+
+  /** Abbreviate the user's home prefix to `~` for compact display. Full path is still copied. */
+  function tildify(p: string): string {
+    return p.replace(/^\/(?:home|Users)\/[^/]+/, '~');
+  }
+
+  function renderStartRail(info: StartPathInfo): void {
+    const cands = info.candidates ?? [];
+    const top = cands[0];
+    // Nothing useful to suggest when the only candidate is the current folder
+    // (no git repo, no PRD-owner sentinel) and we're not below a root.
+    const meaningful = cands.length > 1 || (!!top && top.kind !== 'current') || info.belowRoot;
+    if (!meaningful) {
+      startRailSection.hidden = true;
+      return;
+    }
+    startRailSection.hidden = false;
+
+    startRailReco.textContent = top ? `${top.label} · ${tildify(top.path)}` : '';
+    startRailWarn.hidden = !info.belowRoot;
+
+    startRailList.innerHTML = cands.map((c, i) => {
+      const isReco = i === 0;
+      const isCurrent = c.kind === 'current';
+      const star = isReco ? ' <span class="start-reco-star" title="Recommended">⭐</span>' : '';
+      const here = isCurrent && info.belowRoot
+        ? ' <span class="start-here-flag" title="Where your workspace is opened">⚠ you are here</span>'
+        : (isCurrent ? ' <span class="start-here-flag" title="Where your workspace is opened">you are here</span>' : '');
+      return `<li class="start-card${isReco ? ' reco' : ''}${isCurrent ? ' current' : ''}" role="listitem">
+        <div class="start-card-row">
+          <span class="start-card-kind">${escapeHtml(c.label)}${star}${here}</span>
+          <button type="button" class="start-action start-copy" data-cmd='cd "${escapeAttr(c.path)}"' title="Copy: cd &quot;${escapeAttr(c.path)}&quot;">Copy cd</button>
+        </div>
+        <div class="start-card-path" title="${escapeAttr(c.path)}">${escapeHtml(tildify(c.path))}</div>
+      </li>`;
+    }).join('');
+
+    startRailList.querySelectorAll<HTMLButtonElement>('.start-copy').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd ?? '';
+        if (cmd) api?.postMessage({ type: 'COPY_COMMAND', payload: { command: cmd } });
+      });
+    });
+  }
+
+  function toggleStartRail(): void {
+    startRailOpen = !startRailOpen;
+    startRailList.hidden = !startRailOpen;
+    startRailToggle.setAttribute('aria-expanded', String(startRailOpen));
+    const glyph = startRailToggle.querySelector('.start-rail-glyph');
+    if (glyph) glyph.textContent = startRailOpen ? '▾' : '▸';
+  }
+  startRailToggle.addEventListener('click', toggleStartRail);
+  startRailToggle.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggleStartRail(); }
   });
 
   // Toggle collapse/expand of the Tags section (collapsed by default).
@@ -450,6 +535,8 @@ function bootSidebar(): void {
       tilesEl.classList.add('outdated');
     } else if (msg.type === 'SYNC_HANDOFFS') {
       renderResumeRail(msg.payload);
+    } else if (msg.type === 'SYNC_START_PATH') {
+      renderStartRail(msg.payload);
     }
   });
 

@@ -136,6 +136,28 @@ export function isHandoffDoc(x: unknown): x is import('./types').HandoffDoc {
   if (typeof x.mtimeMs !== 'number') return false;
   if (typeof x.resumeCmd !== 'string') return false;
   if (x.prdId !== null && typeof x.prdId !== 'string') return false;
+  // Start-path fields: optional for forward-compat, but when present must be
+  // string|null (projectHint/startRoot are absolute dirs or null).
+  if (x.projectHint !== undefined && x.projectHint !== null && !isAbsolutePath(x.projectHint)) return false;
+  if (x.startRoot !== undefined && x.startRoot !== null && !isAbsolutePath(x.startRoot)) return false;
+  return true;
+}
+
+const START_KINDS = new Set(['worktree', 'git-root', 'main-repo', 'prd-owner', 'current']);
+
+function isStartCandidate(x: unknown): x is import('./types').StartCandidate {
+  if (!isObject(x)) return false;
+  if (!isAbsolutePath(x.path)) return false;
+  if (typeof x.kind !== 'string' || !START_KINDS.has(x.kind)) return false;
+  if (typeof x.label !== 'string' || x.label.length === 0) return false;
+  return true;
+}
+
+export function isStartPathInfo(x: unknown): x is import('./types').StartPathInfo {
+  if (!isObject(x)) return false;
+  if (!isAbsolutePath(x.from)) return false;
+  if (!Array.isArray(x.candidates) || !x.candidates.every(isStartCandidate)) return false;
+  if (typeof x.belowRoot !== 'boolean') return false;
   return true;
 }
 
@@ -153,6 +175,9 @@ export function isExtensionResponse(x: unknown): x is ExtensionResponse {
   }
   if (x.type === 'SYNC_HANDOFFS') {
     return Array.isArray(x.payload) && x.payload.every(isHandoffDoc);
+  }
+  if (x.type === 'SYNC_START_PATH') {
+    return isStartPathInfo(x.payload);
   }
   return false;
 }
