@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prdone — Sidebar</title>
+<style>
+  :root{
+    --bg:#0f1216;--panel:#171b21;--panel2:#1c222a;--line:#272e38;
+    --ink:#e7ecf2;--dim:#93a0b2;--faint:#5f6b7c;
+    --accent:#4ea3ff;--teal:#3ad0b0;--warn:#f5a35b;--bad:#ef6f6f;--ok:#5cc98a;--prd:#a98bff;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  *{scrollbar-width:none}                              /* invisible scrollbars everywhere */
+  *::-webkit-scrollbar{width:0;height:0;display:none}
+  html,body{overflow-x:hidden}
+  body{margin:0;background:#0a0c0f;color:var(--ink);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased;
+       display:flex;justify-content:center;padding:22px 0}
+  .sb{width:380px;height:calc(100vh - 44px);background:var(--bg);border:1px solid var(--line);border-radius:10px;
+      display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  .sb-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .sb-head .wm{font:800 15px var(--sans);letter-spacing:-.02em}.sb-head .wm b{color:var(--prd)}
+  .sb-head .repo{font:600 12px var(--mono);color:var(--repoColor,var(--accent));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sb-head .cnt{margin-left:auto;font:600 10px var(--mono);color:var(--faint);flex:0 0 auto}
+  /* 1) tabs nav — on top */
+  .tabs{display:flex;padding:6px 8px 0;gap:2px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .tb{flex:1;text-align:center;font:600 11.5px var(--sans);color:var(--dim);padding:8px 4px;cursor:pointer;
+      border-bottom:2px solid transparent;display:flex;flex-direction:column;gap:2px}
+  .tb:hover{color:var(--ink)}
+  .tb.on{color:var(--ink);border-bottom-color:var(--repoColor,var(--accent))}
+  .tb .c{font:700 10px var(--mono);color:var(--faint)}.tb.on .c{color:var(--repoColor,var(--accent))}
+  /* 2) expandable chips — underneath the tabs. collapsed = one row; expands into a slide-down drawer */
+  .chips-zone{position:relative;flex:0 0 auto;border-bottom:1px solid var(--line)}
+  .chips-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;overflow:hidden}
+  .chips-bar .expander{margin-left:auto;flex:0 0 auto;font:600 10.5px var(--mono);color:var(--dim);cursor:pointer;
+      border:1px solid var(--line);border-radius:14px;padding:4px 9px;white-space:nowrap;display:flex;gap:5px;align-items:center}
+  .chips-bar .expander:hover{color:var(--ink);border-color:var(--faint)}
+  .chips-bar .expander .car{transition:transform .18s}
+  .chips-zone.open .expander .car{transform:rotate(180deg)}
+  .chips-drawer{position:absolute;left:0;right:0;top:100%;z-index:20;background:var(--panel);
+      border-bottom:1px solid var(--line);box-shadow:0 16px 34px rgba(0,0,0,.55);
+      display:flex;flex-wrap:wrap;gap:6px;padding:0 12px;max-height:0;overflow:hidden;
+      transition:max-height .22s ease,padding .2s ease}
+  .chips-zone.open .chips-drawer{max-height:62vh;overflow-y:auto;overflow-x:hidden;padding:12px}
+  .rchip{font:600 11.5px var(--sans);padding:5px 10px 5px 8px;border-radius:20px;border:1px solid var(--line);
+         color:var(--dim);background:var(--panel);cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:6px;max-width:100%}
+  .rchip .lbl{overflow:hidden;text-overflow:ellipsis}
+  .rchip .dot{width:8px;height:8px;border-radius:50%;background:var(--rc,var(--faint));flex:0 0 auto}
+  .rchip:hover{color:var(--ink);border-color:var(--rc,var(--faint))}
+  .rchip.on{color:var(--ink);border-color:var(--rc,var(--accent));background:color-mix(in srgb,var(--rc,var(--accent)) 22%,transparent)}
+  .rchip .n{font:600 9px var(--mono);color:var(--faint)}
+  /* 3) per-tab list + selection highlight bar (active repo color) */
+  .list{flex:1;overflow-y:auto;overflow-x:hidden;padding:8px}
+  .tile{position:relative;background:var(--panel);border:1px solid var(--line);border-left:3px solid transparent;
+        border-radius:7px;padding:9px 11px 9px 12px;margin-bottom:7px;cursor:pointer;transition:background .1s,border-color .1s}
+  .tile:hover{background:var(--panel2)}
+  .tile.sel{border-left-color:var(--repoColor,var(--accent));background:var(--panel2);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--repoColor,var(--accent)) 45%,transparent)}
+  .tile .top{display:flex;align-items:center;gap:7px;margin-bottom:3px}
+  .glyph{font:700 9px var(--mono);letter-spacing:.4px;padding:1px 6px;border-radius:4px;text-transform:uppercase}
+  .g-scratch{background:#241d3a;color:var(--prd)}.g-archive{background:#1c2836;color:var(--accent)}.g-library{background:#16302a;color:var(--teal)}
+  .g-num{color:var(--accent);font:700 11px var(--mono)}
+  .g-age{margin-left:auto;font:10px var(--mono);color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%}
+  .tile .ttl{font:600 12.5px var(--sans);line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .tile .sub{font:10.5px var(--mono);color:var(--faint);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile .lnk{display:inline-block;margin-top:5px;font:600 9.5px var(--mono);color:var(--prd);border:1px solid #3a3255;border-radius:10px;padding:1px 6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile .lnk.none{color:var(--faint);border-color:var(--line);border-style:dashed}
+  .work{font:11px var(--mono);color:var(--dim);padding:2px 2px;word-break:break-word}
+  .work b{color:var(--warn)}
+  .empty{color:var(--faint);text-align:center;padding:32px 12px;font-size:12px;line-height:1.6}.empty .big{font-size:24px;opacity:.4}
+  .loading{color:var(--dim);text-align:center;padding:40px;font:12px var(--mono)}
+</style></head>
+<body>
+<div class="sb">
+  <div class="sb-head"><span class="wm">👑 <b>prdone</b></span><span class="repo" id="repoName"></span><span class="cnt" id="cnt"></span></div>
+  <div class="tabs" id="tabs"></div>
+  <div class="chips-zone" id="chipsZone">
+    <div class="chips-bar" id="chipsBar"></div>
+    <div class="chips-drawer" id="chipsDrawer"></div>
+  </div>
+  <div class="list" id="list"><div class="loading">loading…</div></div>
+</div>
+<script>
+let DATA=null, REPO='twicedata_intra', TAB='PRDs', REPOS=[];
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const PALETTE=['#4ea3ff','#a98bff','#3ad0b0','#f5a35b','#ef6f6f','#5cc98a','#e6c15a','#e87fb0','#7dd3fc','#c084fc','#fb923c','#4ade80','#f472b6','#38bdf8','#a3e635','#fbbf24'];
+const repoColor=n=>{let h=0;for(const ch of String(n))h=(h*31+ch.charCodeAt(0))>>>0;return PALETTE[h%PALETTE.length];};
+const setRepoColor=()=>document.querySelector('.sb').style.setProperty('--repoColor',repoColor(REPO));
+const mkChip=(r,active)=>{const n=(r.prdCount||0)+(r.giteaOpenIssues||0);
+  const chip=el('div','rchip'+(active?' on':''),`<span class="dot"></span><span class="lbl">${esc(r.name)}</span>${n?`<span class="n">${n}</span>`:''}`);
+  chip.style.setProperty('--rc',repoColor(r.name));
+  chip.onclick=()=>{REPO=r.name;setRepoColor();document.getElementById('chipsZone').classList.remove('open');renderBar();load();};
+  return chip;};
+
+async function loadChips(){
+  const d=await (await fetch('/api/repos')).json();
+  REPOS=d.repos;
+  document.getElementById('cnt').textContent=d.shown+' repos';
+  renderBar(); renderDrawer();
+}
+function renderBar(){
+  const bar=document.getElementById('chipsBar'); bar.innerHTML='';
+  const cur=REPOS.find(r=>r.name===REPO)||{name:REPO};
+  bar.appendChild(mkChip(cur,true));
+  const exp=el('div','expander',`${REPOS.length} repos <span class="car">▾</span>`);
+  exp.onclick=()=>document.getElementById('chipsZone').classList.toggle('open');
+  bar.appendChild(exp);
+  document.getElementById('repoName').textContent=REPO;
+}
+function renderDrawer(){
+  const dr=document.getElementById('chipsDrawer'); dr.innerHTML='';
+  REPOS.forEach(r=>dr.appendChild(mkChip(r,r.name===REPO)));
+}
+async function load(){
+  document.getElementById('list').innerHTML='<div class="loading">loading '+esc(REPO)+'…</div>';
+  DATA=await (await fetch('/api/hub?repo='+encodeURIComponent(REPO))).json();
+  renderTabs(); renderList();
+}
+function counts(){const d=DATA||{};return {Work:(d.work&&d.work.dirty)||0,PRDs:(d.prds||[]).length,Issues:(d.issues||[]).length,Handoffs:(d.handoffs||[]).length};}
+function renderTabs(){
+  const c=counts(); const t=document.getElementById('tabs'); t.innerHTML='';
+  ['Work','PRDs','Issues','Handoffs'].forEach(name=>{
+    const tb=el('div','tb'+(name===TAB?' on':''),`${name}<span class="c">${c[name]}</span>`);
+    tb.onclick=()=>{TAB=name;document.querySelectorAll('.tb').forEach(x=>x.classList.remove('on'));tb.classList.add('on');renderList();};
+    t.appendChild(tb);
+  });
+}
+function renderList(){
+  const d=DATA||{}, L=document.getElementById('list'); L.innerHTML='';
+  const sel=n=>{n.onclick=()=>{document.querySelectorAll('.tile').forEach(x=>x.classList.remove('sel'));n.classList.add('sel');};};
+  if(TAB==='Work'){
+    const w=d.work||{};
+    L.appendChild(el('div','work',`branch <b>${esc(w.branch||'?')}</b> · ${w.worktrees||0} worktree(s) · ${w.dirty||0} dirty`));
+    (w.recent||[]).forEach(c=>{const n=el('div','tile',`<div class="sub" style="white-space:normal">${esc(c)}</div>`);sel(n);L.appendChild(n);});
+    if(!(w.recent||[]).length)L.appendChild(el('div','empty','<div class="big">◴</div>no recent commits'));
+  } else if(TAB==='PRDs'){
+    const byPrd=(d.links&&d.links.byPrd)||{};
+    (d.prds||[]).forEach(p=>{const cnt=(byPrd[p.id]||[]).length;const n=el('div','tile',
+      `<div class="top"><span class="glyph g-${esc(p.tier)}">${esc(p.tier)}</span><span class="g-age">${cnt} issue${cnt!==1?'s':''}</span></div>
+       <div class="ttl">${esc(p.title||p.id)}</div><div class="sub">${esc(p.id)}</div>`);sel(n);L.appendChild(n);});
+    if(!(d.prds||[]).length)L.appendChild(el('div','empty','<div class="big">▤</div>no PRDs for this repo'));
+  } else if(TAB==='Issues'){
+    const tById={};(d.prds||[]).forEach(p=>tById[p.id]=p.title||p.id);
+    (d.issues||[]).forEach(i=>{const refs=(i.prdRefs||[]);
+      const link=refs.length?`<span class="lnk">↑ ${esc((tById[refs[0]]||refs[0]).slice(0,26))}</span>`:`<span class="lnk none">no PRD</span>`;
+      const n=el('div','tile',`<div class="top"><span class="g-num">#${i.number}</span><span class="g-age">${esc((i.labels||[]).join(' '))}</span></div>
+       <div class="ttl">${esc(i.title||'')}</div>${link}`);sel(n);L.appendChild(n);});
+    if(!(d.issues||[]).length)L.appendChild(el('div','empty','<div class="big">✓</div>no open issues'));
+  } else {
+    (d.handoffs||[]).forEach(h=>{const n=el('div','tile',`<div class="sub" style="white-space:normal">⇲ ${esc(h.file)}</div>`);sel(n);L.appendChild(n);});
+    if(!(d.handoffs||[]).length)L.appendChild(el('div','empty','<div class="big">⇲</div>no handoffs linked<br><span style="font:10px var(--mono);color:var(--faint)">/handoff → ~/handoff/</span>'));
+  }
+}
+(async()=>{setRepoColor();await loadChips();await load();})();
+</script>
+</body></html>
