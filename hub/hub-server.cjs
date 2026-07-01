@@ -3,6 +3,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const os = require('os');
 const { discover, norm } = require('./discover.cjs');
+const { connectionsFor } = require('./connections.cjs');
 const HOME = os.homedir();
 const PRDONE = path.join(HOME, 'Documents/code/prdone');
 const express = require(path.join(PRDONE, 'node_modules', 'express'));
@@ -88,7 +89,8 @@ app.get('/api/hub', (req,res)=>{
   const issues = issuesForRepo(entry);
   const handoffs = handoffsForRepo(entry.key);
   const links = linkIssuesToPrds(issues, prds);
-  res.set('Cache-Control','no-store').json({ ok:true, repo:entry.key, ownerRepo:entry.ownerRepo||'(no tracker)', tracker:entry.tracker||'none', localPath:entry.localPath, work, prds, issues, handoffs, links });
+  const connections = connectionsFor(entry.key, discover().filter(e=>e.relevant && (e.tracker || e.prdCount>0)), { issues });
+  res.set('Cache-Control','no-store').json({ ok:true, repo:entry.key, ownerRepo:entry.ownerRepo||'(no tracker)', tracker:entry.tracker||'none', localPath:entry.localPath, work, prds, issues, handoffs, links, connections });
 });
 app.get('/sidebar', (_q,res)=> res.sendFile(path.join(__dirname,'sidebar.html')));
 app.get('/', (_q,res)=> res.sendFile(path.join(__dirname,'hub.html')));
