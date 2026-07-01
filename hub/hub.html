@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prdone — Work Hub</title>
+<style>
+  :root{
+    --bg:#0f1216;--panel:#171b21;--panel2:#1c222a;--line:#272e38;
+    --ink:#e7ecf2;--dim:#93a0b2;--faint:#5f6b7c;
+    --accent:#4ea3ff;--teal:#3ad0b0;--warn:#f5a35b;--bad:#ef6f6f;--ok:#5cc98a;--prd:#a98bff;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--r:12px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1280px;margin:0 auto;padding:20px 22px 80px}
+  a{color:inherit;text-decoration:none}
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:14px}
+  .brand{font-weight:750;font-size:15px}.brand b{color:var(--prd)}
+  .tag{font:600 11px var(--mono);color:var(--faint);border:1px solid var(--line);padding:3px 8px;border-radius:20px}
+  .repo-switch{margin-left:auto;display:flex;align-items:center;gap:8px}
+  select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:600 13px var(--sans)}
+  .tabs{display:flex;gap:6px;background:var(--panel);border:1px solid var(--line);padding:4px;border-radius:10px}
+  .tab{font:600 12.5px var(--sans);color:var(--dim);padding:7px 13px;border-radius:7px;cursor:pointer}
+  .tab.on{background:var(--panel2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+  /* repo header */
+  .repohead{display:flex;align-items:flex-start;gap:18px;flex-wrap:wrap;background:linear-gradient(180deg,#1a2028,#161b22);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin:18px 0}
+  .repotitle{font-size:19px;font-weight:750;display:flex;align-items:center;gap:10px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(92,201,138,.15)}
+  .repometa{color:var(--dim);font:12.5px var(--mono);margin-top:5px}
+  .stats{margin-left:auto;display:flex;gap:22px}
+  .stat{text-align:center}.stat .n{font-size:22px;font-weight:750}.stat .l{font:600 10.5px var(--mono);color:var(--faint);text-transform:uppercase;letter-spacing:.6px}
+  .n.work{color:var(--warn)}.n.prd{color:var(--prd)}.n.issue{color:var(--accent)}.n.hand{color:var(--teal)}
+  .chips{display:flex;gap:10px;flex-wrap:wrap;margin:-6px 0 18px}
+  .chip{font:600 11.5px var(--mono);padding:5px 10px;border-radius:20px;border:1px solid var(--line);color:var(--dim)}
+  .chip.good{color:var(--ok);border-color:#264a37}.chip.gap{color:var(--warn);border-color:#4a3a26}
+  /* spine */
+  #vA.on,#vB.on{display:block}#vA,#vB{display:none}
+  #vB.on{display:grid;grid-template-columns:.9fr 1.1fr 1.2fr .9fr;gap:14px}
+  .prdcard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);margin-bottom:12px;overflow:hidden}
+  .prdcard.hasissues{box-shadow:inset 3px 0 0 var(--prd)}
+  .prdhead{display:flex;align-items:center;gap:12px;padding:13px 15px;cursor:pointer}
+  .prdhead:hover{background:var(--panel2)}
+  .caret{color:var(--faint);font-size:11px;transition:transform .15s}.prdcard.open .caret{transform:rotate(90deg)}
+  .kind{font:700 9.5px var(--mono);letter-spacing:.5px;padding:2px 7px;border-radius:5px;text-transform:uppercase;background:#241d3a;color:var(--prd)}
+  .kind.scratch{background:#241d3a;color:var(--prd)}.kind.archive{background:#1c2836;color:var(--accent)}.kind.library{background:#16302a;color:var(--teal)}
+  .prdname{font:13px var(--mono)}.prdname b{color:var(--ink)}.prdslug{color:var(--faint)}
+  .prdright{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .tier{font:600 10px var(--mono);color:var(--faint);border:1px solid var(--line);padding:2px 7px;border-radius:20px}
+  .count{font:600 11px var(--mono);color:var(--dim)}.count b{color:var(--accent)}
+  .issuelist{display:none;border-top:1px solid var(--line);padding:6px 0}.prdcard.open .issuelist{display:block}
+  .irow{display:flex;align-items:center;gap:11px;padding:8px 16px 8px 40px}.irow:hover{background:var(--panel2)}
+  .inum{font:700 11.5px var(--mono);color:var(--accent);min-width:38px}
+  .ititle{font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .noissues{padding:8px 16px 10px 40px;color:var(--faint);font-size:12.5px}
+  /* lanes */
+  .lane{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);min-height:420px;display:flex;flex-direction:column}
+  .lanehd{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .lanehd .t{font:700 12px var(--sans)}.lanehd .c{margin-left:auto;font:700 11px var(--mono);color:var(--faint)}
+  .sw{width:8px;height:8px;border-radius:2px}.sw.work{background:var(--warn)}.sw.prd{background:var(--prd)}.sw.issue{background:var(--accent)}.sw.hand{background:var(--teal)}
+  .lanebody{padding:10px;display:flex;flex-direction:column;gap:8px;overflow:auto}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 11px}
+  .card .h{font:600 12.5px var(--sans);display:flex;gap:7px;align-items:baseline}
+  .card .s{font:11px var(--mono);color:var(--faint);margin-top:3px;word-break:break-word}
+  .card .meta{display:flex;gap:6px;margin-top:7px;flex-wrap:wrap}
+  .lnk{font:600 10px var(--mono);padding:2px 7px;border-radius:12px;border:1px solid var(--line)}
+  .lnk.prd{color:var(--prd);border-color:#3a3255}.lnk.issue{color:var(--accent);border-color:#2a3550}.lnk.none{color:var(--faint);border-style:dashed}
+  .empty{color:var(--faint);font-size:12.5px;text-align:center;padding:30px 12px;line-height:1.6}.empty .big{font-size:26px;opacity:.4}
+  .loading{padding:60px;text-align:center;color:var(--dim);font:14px var(--mono)}
+</style></head>
+<body><div class="wrap">
+  <div class="topbar">
+    <div class="brand">👑 <b>prdone</b> · Work Hub</div>
+    <span class="tag">PROTOTYPE · live data</span>
+    <div class="repo-switch">
+      <span class="tag" id="repoCount" style="border:none">repo</span>
+      <select id="repoSel"></select>
+      <div class="tabs"><div class="tab on" data-v="A">PRD Spine</div><div class="tab" data-v="B">Repo Command</div></div>
+    </div>
+  </div>
+  <div id="body"><div class="loading">Loading hub…</div></div>
+</div>
+<script>
+const glyphTier={scratch:'scratch',archive:'archive',library:'library'};
+let DATA=null, VIEW='A';
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+async function loadRepos(){
+  const data=await (await fetch('/api/repos')).json();
+  const sel=document.getElementById('repoSel');
+  sel.innerHTML=data.repos.map(r=>{
+    const hint=[r.tracker||'—', r.prdCount?(r.prdCount+'p'):'', r.giteaOpenIssues?(r.giteaOpenIssues+'i'):''].filter(Boolean).join(' ');
+    return `<option value="${esc(r.name)}" ${r.name==='twicedata_intra'?'selected':''}>${esc(r.name)} · ${esc(hint)}</option>`;
+  }).join('');
+  const tag=document.getElementById('repoCount'); if(tag) tag.textContent=data.shown+' of '+data.total+' repos';
+  sel.onchange=()=>load(sel.value);
+}
+async function load(repo){
+  document.getElementById('body').innerHTML='<div class="loading">Loading '+esc(repo)+'…</div>';
+  DATA=await (await fetch('/api/hub?repo='+encodeURIComponent(repo))).json();
+  render();
+}
+function issueByNum(){const m={};(DATA.issues||[]).forEach(i=>m[i.number]=i);return m;}
+function render(){
+  if(!DATA||!DATA.ok){document.getElementById('body').innerHTML='<div class="loading">no data</div>';return;}
+  const d=DATA, byPrd=(d.links&&d.links.byPrd)||{}, orphans=(d.links&&d.links.orphans)||[];
+  const linkedPrd=d.prds.filter(p=>(byPrd[p.id]||[]).length);
+  const emptyPrd=d.prds.filter(p=>!(byPrd[p.id]||[]).length);
+  const b=el('div');
+  // header
+  const head=el('div','repohead');
+  head.innerHTML=`<div>
+      <div class="repotitle"><span class="dot"></span> ${esc(d.repo)}</div>
+      <div class="repometa">${esc(d.tracker)} · ${esc(d.ownerRepo)} · branch <b style="color:var(--warn)">${esc(d.work.branch||'?')}</b> · ${d.work.worktrees} worktree${d.work.worktrees!==1?'s':''} · ${d.work.dirty} dirty</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n work">${d.work.dirty}</div><div class="l">dirty</div></div>
+      <div class="stat"><div class="n prd">${d.prds.length}</div><div class="l">PRDs</div></div>
+      <div class="stat"><div class="n issue">${d.issues.length}</div><div class="l">open issues</div></div>
+      <div class="stat"><div class="n hand">${d.handoffs.length}</div><div class="l">handoffs</div></div>
+    </div>`;
+  b.appendChild(head);
+  // chips
+  const linkedIssues=d.issues.length-orphans.length;
+  const chips=el('div','chips');
+  chips.innerHTML=
+    `<span class="chip ${orphans.length?'':'good'}">${linkedIssues}/${d.issues.length} issues linked to a PRD</span>`+
+    `<span class="chip ${emptyPrd.length?'gap':'good'}">${emptyPrd.length} PRDs with no issues${emptyPrd.length?' — suggest targets':''}</span>`+
+    `<span class="chip ${d.handoffs.length?'good':'gap'}">${d.handoffs.length} handoffs linked</span>`;
+  b.appendChild(chips);
+  // tabs container
+  const vA=el('div');vA.id='vA';vA.className=VIEW==='A'?'on':'';
+  const vB=el('div');vB.id='vB';vB.className=VIEW==='B'?'on':'';
+  // ---- Variant A: PRD spine ----
+  const im=issueByNum();
+  const spinePrds=[...linkedPrd, ...emptyPrd];
+  spinePrds.forEach(p=>{
+    const nums=byPrd[p.id]||[];
+    const card=el('div','prdcard'+(nums.length?' hasissues open':''));
+    const kind=`<span class="kind ${esc(p.tier)}">${esc(p.tier)}</span>`;
+    card.innerHTML=`<div class="prdhead"><span class="caret">▶</span>${kind}
+      <span class="prdname"><b>${esc(p.title||p.id)}</b> <span class="prdslug">· ${esc(p.id)}</span></span>
+      <div class="prdright"><span class="tier">${esc(p.status)}</span><span class="count"><b>${nums.length}</b> issue${nums.length!==1?'s':''}</span></div></div>`;
+    const list=el('div','issuelist');
+    if(nums.length){ nums.forEach(n=>{const i=im[n]||{};list.appendChild(el('div','irow',`<span class="inum">#${n}</span><span class="ititle">${esc(i.title||'')}</span>`));}); }
+    else { list.appendChild(el('div','noissues','No issues linked yet — a /issue-king suggest target.')); }
+    card.appendChild(list);
+    card.querySelector('.prdhead').onclick=()=>card.classList.toggle('open');
+    vA.appendChild(card);
+  });
+  // orphan issues
+  if(orphans.length){
+    const card=el('div','prdcard open');
+    card.innerHTML=`<div class="prdhead"><span class="caret">▶</span><span class="kind" style="background:#20262e;color:var(--dim)">ORPHAN</span>
+      <span class="prdname"><b>Issues not linked to a PRD</b></span>
+      <div class="prdright"><span class="count"><b>${orphans.length}</b></span></div></div>`;
+    const list=el('div','issuelist');
+    orphans.forEach(n=>{const i=im[n]||{};list.appendChild(el('div','irow',`<span class="inum">#${n}</span><span class="ititle">${esc(i.title||'')}</span>`));});
+    card.appendChild(list);
+    card.querySelector('.prdhead').onclick=()=>card.classList.toggle('open');
+    vA.appendChild(card);
+  }
+  // ---- Variant B: 4 lanes ----
+  const prdTitleById={};d.prds.forEach(p=>prdTitleById[p.id]=p.title||p.id);
+  const lane=(sw,t,c,items)=>{const l=el('div','lane');l.innerHTML=`<div class="lanehd"><span class="sw ${sw}"></span><span class="t">${t}</span><span class="c">${c}</span></div>`;const bd=el('div','lanebody');items.forEach(x=>bd.appendChild(x));l.appendChild(bd);return l;};
+  // work lane
+  const workItems=[el('div','card',`<div class="h">${esc(d.work.branch||'?')} <span style="font:600 10px var(--mono);color:var(--faint)">${d.work.dirty} dirty</span></div><div class="s">${d.work.worktrees} worktree(s)</div>`)];
+  (d.work.recent||[]).forEach(c=>workItems.push(el('div','card',`<div class="s">${esc(c)}</div>`)));
+  // prd lane
+  const prdItems=d.prds.map(p=>{const nums=byPrd[p.id]||[];return el('div','card',`<div class="h">${esc(p.title||p.id)} <span class="kind ${esc(p.tier)}" style="font-size:8.5px">${esc(p.tier)}</span></div><div class="s">${esc(p.id)}</div><div class="meta">${nums.length?`<span class="lnk issue">${nums.length} issue${nums.length!==1?'s':''}</span>`:'<span class="lnk none">no issues</span>'}</div>`);});
+  // issue lane
+  const issueItems=d.issues.slice(0,40).map(i=>{const refs=(i.prdRefs||[]).map(id=>`<span class="lnk prd">↑ ${esc((prdTitleById[id]||id).slice(0,22))}</span>`).join('')||'<span class="lnk none">no PRD</span>';return el('div','card',`<div class="h"><span style="color:var(--accent);font:700 11px var(--mono)">#${i.number}</span> ${esc((i.title||'').slice(0,60))}</div><div class="meta">${refs}</div>`);});
+  // handoff lane
+  const handItems=d.handoffs.length?d.handoffs.map(h=>el('div','card',`<div class="s">${esc(h.file)}</div>`)):[el('div','empty',`<div class="big">⇲</div>No handoff linked to this repo.<br><span style="font:11px var(--mono);color:var(--faint)">/handoff writes PRD-linked docs to ~/handoff/</span>`)];
+  vB.appendChild(lane('work','Current work',d.work.dirty,workItems));
+  vB.appendChild(lane('prd','PRDs',d.prds.length,prdItems));
+  vB.appendChild(lane('issue','Issues',d.issues.length,issueItems));
+  vB.appendChild(lane('hand','Handoffs',d.handoffs.length,handItems));
+  b.appendChild(vA);b.appendChild(vB);
+  const body=document.getElementById('body');body.innerHTML='';body.appendChild(b);
+  document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{VIEW=t.dataset.v;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.v===VIEW));document.getElementById('vA').className=VIEW==='A'?'on':'';document.getElementById('vB').className=VIEW==='B'?'on':'';});
+}
+(async()=>{await loadRepos();const p=new URLSearchParams(location.search).get('repo');const sel=document.getElementById('repoSel');if(p){for(const o of sel.options){if(o.value.toLowerCase()===p.toLowerCase()){sel.value=o.value;break;}}}await load(sel.value||'twicedata_intra');})();
+</script>
+</body></html>

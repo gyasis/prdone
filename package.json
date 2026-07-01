@@ -104,7 +104,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "package": "vsce package -o dist/",
-    "vscode:prepublish": "npm run build"
+    "vscode:prepublish": "npm run build",
+    "hub": "node hub/hub-server.cjs"
   },
   "dependencies": {
     "express": "^4.21.2"
