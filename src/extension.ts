@@ -73,6 +73,30 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // prd.openHub — cross-repo Work Hub. Lazy-starts the SAME bundled server
+  // (it now also serves /sidebar + /hub + /api/hub + /api/repos) and opens the
+  // sidebar hub view in the browser.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('prd.openHub', async () => {
+      try {
+        if (!kanbanServer) {
+          const cfg = vscode.workspace.getConfiguration('prd');
+          const basePort = cfg.get<number>('kanbanBasePort') ?? 7373;
+          kanbanServer = await startKanbanServer({
+            extensionRoot: context.extensionUri.fsPath,
+            basePort
+          });
+        }
+        const url = kanbanServer.url.replace(/\/$/, '') + '/sidebar';
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `Could not start hub server: ${(err as Error).message}`
+        );
+      }
+    })
+  );
+
   // B2.2: Auto-refresh every N minutes (default 30, configurable via
   // `prd.autoRefreshMinutes`). Defensive against the FileSystemWatcher gaps
   // that B2 was opened to fix — terminal-driven `prd new` doesn't fire

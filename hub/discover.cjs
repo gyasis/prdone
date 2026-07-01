@@ -2,6 +2,9 @@
 const fs=require('fs'), os=require('os'), path=require('path');
 const { execFileSync }=require('child_process');
 const HOME=os.homedir();
+// GUI-launched editors (Cursor/VSCode) often start with a minimal PATH — ensure
+// gh/git/curl/prd/issue-list resolve when this runs inside the extension host.
+process.env.PATH=[...new Set([...(process.env.PATH||'').split(':'),path.join(HOME,'.local/bin'),path.join(HOME,'bin'),'/usr/local/bin','/opt/homebrew/bin','/usr/bin','/bin'])].filter(Boolean).join(':');
 const sh=(c,a,o={})=>{try{return execFileSync(c,a,{maxBuffer:32*1024*1024,timeout:45000,...o}).toString();}catch(e){return '';}};
 const bash=c=>{try{return execFileSync('bash',['-lc',c],{maxBuffer:32*1024*1024,timeout:15000}).toString();}catch(e){return '';}};
 const norm=s=>String(s).toLowerCase().replace(/[-_ ]/g,'');
