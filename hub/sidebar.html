@@ -66,6 +66,8 @@
   .tile .lnk.none{color:var(--faint);border-color:var(--line);border-style:dashed}
   .work{font:11px var(--mono);color:var(--dim);padding:2px 2px;word-break:break-word}
   .work b{color:var(--warn)}
+  .conn-label{font:700 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:12px 4px 5px}
+  .cdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
   .empty{color:var(--faint);text-align:center;padding:32px 12px;font-size:12px;line-height:1.6}.empty .big{font-size:24px;opacity:.4}
   .loading{color:var(--dim);text-align:center;padding:40px;font:12px var(--mono)}
 </style></head>
@@ -116,10 +118,12 @@ async function load(){
   DATA=await (await fetch('/api/hub?repo='+encodeURIComponent(REPO))).json();
   renderTabs(); renderList();
 }
-function counts(){const d=DATA||{};return {Work:(d.work&&d.work.dirty)||0,PRDs:(d.prds||[]).length,Issues:(d.issues||[]).length,Handoffs:(d.handoffs||[]).length};}
+function counts(){const d=DATA||{};const cn=d.connections||{uses:[],usedBy:[],references:[]};
+  return {Work:(d.work&&d.work.dirty)||0,PRDs:(d.prds||[]).length,Issues:(d.issues||[]).length,Handoffs:(d.handoffs||[]).length,
+          Links:(cn.uses.length+cn.usedBy.length+cn.references.length)};}
 function renderTabs(){
   const c=counts(); const t=document.getElementById('tabs'); t.innerHTML='';
-  ['Work','PRDs','Issues','Handoffs'].forEach(name=>{
+  ['Work','PRDs','Issues','Handoffs','Links'].forEach(name=>{
     const tb=el('div','tb'+(name===TAB?' on':''),`${name}<span class="c">${c[name]}</span>`);
     tb.onclick=()=>{TAB=name;document.querySelectorAll('.tb').forEach(x=>x.classList.remove('on'));tb.classList.add('on');renderList();};
     t.appendChild(tb);
@@ -146,11 +150,20 @@ function renderList(){
       const n=el('div','tile',`<div class="top"><span class="g-num">#${i.number}</span><span class="g-age">${esc((i.labels||[]).join(' '))}</span></div>
        <div class="ttl">${esc(i.title||'')}</div>${link}`);sel(n);L.appendChild(n);});
     if(!(d.issues||[]).length)L.appendChild(el('div','empty','<div class="big">✓</div>no open issues'));
-  } else {
+  } else if(TAB==='Handoffs'){
     (d.handoffs||[]).forEach(h=>{const n=el('div','tile',`<div class="sub" style="white-space:normal">⇲ ${esc(h.file)}</div>`);sel(n);L.appendChild(n);});
     if(!(d.handoffs||[]).length)L.appendChild(el('div','empty','<div class="big">⇲</div>no handoffs linked<br><span style="font:10px var(--mono);color:var(--faint)">/handoff → ~/handoff/</span>'));
+  } else {
+    const c=d.connections||{uses:[],usedBy:[],references:[]};
+    const grp=(label,arr,arrow)=>{ if(!arr.length)return;
+      L.appendChild(el('div','conn-label',label));
+      arr.forEach(rn=>{const n=el('div','tile',`<div class="top"><span class="cdot" style="background:${repoColor(rn)}"></span><span class="ttl" style="-webkit-line-clamp:1">${arrow} ${esc(rn)}</span></div>`);
+        n.onclick=()=>{REPO=rn;setRepoColor();renderBar();load();};L.appendChild(n);});
+    };
+    grp('Uses →',c.uses,'→'); grp('Used by ←',c.usedBy,'←'); grp('References',c.references,'·');
+    if(!c.uses.length&&!c.usedBy.length&&!c.references.length)L.appendChild(el('div','empty','<div class="big">⇄</div>no detected connections'));
   }
 }
-(async()=>{setRepoColor();await loadChips();await load();})();
+(async()=>{const q=new URLSearchParams(location.search);if(q.get('repo'))REPO=q.get('repo');if(q.get('tab'))TAB=q.get('tab');setRepoColor();await loadChips();await load();})();
 </script>
 </body></html>
