@@ -2,7 +2,7 @@
   "name": "prdone",
   "displayName": "PRD Visualizer",
   "description": "Read-only sidebar grid + browser kanban for the prd lifecycle CLI. Renders ~85 PRDs across scratch/archive/library tiers with copy-pasteable Claude Code commands.",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "publisher": "gyasis",
   "private": true,
   "license": "MIT",
@@ -21,6 +21,7 @@
   "activationEvents": [
     "onCommand:prd.openVisualizer",
     "onCommand:prd.openKanban",
+    "onCommand:prd.openHub",
     "onCommand:prd.refreshVisualizer",
     "onCommand:prd.installSkills",
     "onView:prd.sidebar"
@@ -41,6 +42,11 @@
       {
         "command": "prd.openKanban",
         "title": "PRD: Open Kanban (Browser)",
+        "category": "PRD"
+      },
+      {
+        "command": "prd.openHub",
+        "title": "PRD: Open Work Hub (cross-repo)",
         "category": "PRD"
       },
       {

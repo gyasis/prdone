@@ -69,6 +69,31 @@ export async function startKanbanServer(opts: StartOptions): Promise<KanbanServe
     res.sendFile(path.join(opts.extensionRoot, 'webview-frontend', 'styles.css'));
   });
 
+  // ── Cross-repo Work Hub surfaces ─────────────────────────────────────────
+  // Data layer is hub/assemble.cjs (node builtins + shelling to gh/git/prd/
+  // issue-list; NO npm deps) so it runs in the extension host. Loaded via a
+  // runtime require so esbuild doesn't try to bundle the .cjs (eval('require')
+  // keeps the call opaque to the bundler; VSCode extension output is CJS).
+  // eslint-disable-next-line no-eval
+  const nodeRequire = eval('require') as NodeRequire;
+  const hubDir = path.join(opts.extensionRoot, 'hub');
+  const hubMod = (): { assembleHub: (r: string) => unknown; listRepos: (a: boolean, r: boolean) => unknown } =>
+    nodeRequire(path.join(hubDir, 'assemble.cjs'));
+  app.get('/api/repos', (req: Request, res: Response) => {
+    try { res.set('Cache-Control', 'no-store').json(hubMod().listRepos(req.query.all === '1', req.query.refresh === '1')); }
+    catch (e) { res.status(500).json({ ok: false, error: String((e as Error).message || e) }); }
+  });
+  app.get('/api/hub', (req: Request, res: Response) => {
+    try { res.set('Cache-Control', 'no-store').json(hubMod().assembleHub(String(req.query.repo || 'twicedata_intra'))); }
+    catch (e) { res.status(500).json({ ok: false, error: String((e as Error).message || e) }); }
+  });
+  app.get('/sidebar', (_req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store').sendFile(path.join(hubDir, 'sidebar.html'));
+  });
+  app.get('/hub', (_req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store').sendFile(path.join(hubDir, 'hub.html'));
+  });
+
   // GET / — serves the kanban shell.
   app.get('/', (_req: Request, res: Response) => {
     res.set('Cache-Control', 'no-store').sendFile(path.join(opts.extensionRoot, 'kanban-static', 'kanban.html'));
