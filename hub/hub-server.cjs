@@ -90,5 +90,6 @@ app.get('/api/hub', (req,res)=>{
   const links = linkIssuesToPrds(issues, prds);
   res.set('Cache-Control','no-store').json({ ok:true, repo:entry.key, ownerRepo:entry.ownerRepo||'(no tracker)', tracker:entry.tracker||'none', localPath:entry.localPath, work, prds, issues, handoffs, links });
 });
+app.get('/sidebar', (_q,res)=> res.sendFile(path.join(__dirname,'sidebar.html')));
 app.get('/', (_q,res)=> res.sendFile(path.join(__dirname,'hub.html')));
 app.listen(8813,'127.0.0.1',()=>console.log('hub on http://127.0.0.1:8813/'));
