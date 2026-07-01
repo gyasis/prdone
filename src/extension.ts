@@ -88,7 +88,31 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         }
         const url = kanbanServer.url.replace(/\/$/, '') + '/sidebar';
-        await vscode.env.openExternal(vscode.Uri.parse(url));
+        const target = await vscode.env.asExternalUri(vscode.Uri.parse(url));
+        // Prefer an in-IDE webview panel (the "IDE browser"); a visible
+        // "↗ Browser" button falls back to the external browser.
+        try {
+          const panel = vscode.window.createWebviewPanel(
+            'prdHub', 'PRD Work Hub', vscode.ViewColumn.Active,
+            { enableScripts: true, retainContextWhenHidden: true }
+          );
+          const src = target.toString(true);
+          panel.webview.html =
+            `<!doctype html><html><head><meta charset="utf-8">` +
+            `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src ${target.scheme}://* http://127.0.0.1:* http://localhost:* https:;">` +
+            `<style>html,body{margin:0;padding:0;height:100%;background:#0f1216}` +
+            `#f{border:0;width:100%;height:100vh;display:block}` +
+            `#b{position:fixed;top:8px;right:12px;z-index:9;font:600 11px system-ui;color:#93a0b2;background:#171b21;border:1px solid #272e38;border-radius:14px;padding:5px 11px;cursor:pointer;text-decoration:none}` +
+            `#b:hover{color:#e7ecf2}</style></head>` +
+            `<body><a id="b" href="#" onclick="v.postMessage({t:'ext'});return false">↗ Browser</a>` +
+            `<iframe id="f" src="${src}"></iframe>` +
+            `<script>const v=acquireVsCodeApi();</script></body></html>`;
+          panel.webview.onDidReceiveMessage((m) => {
+            if (m && m.t === 'ext') void vscode.env.openExternal(vscode.Uri.parse(url));
+          });
+        } catch {
+          await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
       } catch (err) {
         vscode.window.showErrorMessage(
           `Could not start hub server: ${(err as Error).message}`
