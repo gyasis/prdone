@@ -1,8 +1,8 @@
 {
   "name": "prdone",
-  "displayName": "PRD Visualizer",
+  "displayName": "prdone",
   "description": "Read-only sidebar grid + browser kanban for the prd lifecycle CLI. Renders ~85 PRDs across scratch/archive/library tiers with copy-pasteable Claude Code commands.",
-  "version": "0.2.4",
+  "version": "0.8.0",
   "publisher": "gyasis",
   "private": true,
   "license": "MIT",
@@ -64,7 +64,7 @@
       "activitybar": [
         {
           "id": "prd-container",
-          "title": "PRDs",
+          "title": "prdone",
           "icon": "$(notebook)"
         }
       ]
@@ -74,8 +74,8 @@
         {
           "type": "webview",
           "id": "prd.sidebar",
-          "name": "PRDs",
-          "contextualTitle": "PRD Visualizer"
+          "name": "prdone",
+          "contextualTitle": "prdone"
         }
       ]
     },
@@ -114,7 +114,8 @@
     "hub": "node hub/hub-server.cjs"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "marked": "^18.0.5"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

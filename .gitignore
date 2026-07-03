@@ -37,3 +37,4 @@ deep_research.db
 *.token
 secrets/
 credentials/
+.playwright-mcp/

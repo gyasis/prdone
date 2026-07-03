@@ -17,6 +17,13 @@ export interface TileGridState {
    * current filter would have hidden them. Falls back to `prds` if absent.
    */
   allPrds?: Prd[];
+  /**
+   * Optional click override. When provided, a tile click/Enter calls this
+   * instead of the default openDetail — lets the hub add multi-select
+   * (cmd/ctrl-click) while still reusing the exact same tiles. The grid passes
+   * nothing, so its behaviour is unchanged.
+   */
+  onTileClick?: (prd: Prd, tileEl: HTMLElement, ev: MouseEvent | KeyboardEvent) => void;
 }
 
 /** vscode webview-api glue. The webview gets `acquireVsCodeApi()` injected by the host. */
@@ -53,16 +60,18 @@ export function renderTileGrid(container: HTMLElement, state: TileGridState): vo
 
   // Wire tile-click → openDetail. Tiles are tabindex=0 so keyboard nav works.
   container.querySelectorAll<HTMLElement>('.tile').forEach((el) => {
-    const open = () => {
+    const open = (ev: MouseEvent | KeyboardEvent) => {
       const idx = Number(el.dataset.idx ?? '0');
       const prd = state.prds[idx];
-      if (prd) openDetail(prd, state.allPrds ?? state.prds);
+      if (!prd) return;
+      if (state.onTileClick) state.onTileClick(prd, el, ev);
+      else openDetail(prd, state.allPrds ?? state.prds);
     };
-    el.addEventListener('click', open);
+    el.addEventListener('click', (ev) => open(ev as MouseEvent));
     el.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' || ev.key === ' ') {
         ev.preventDefault();
-        open();
+        open(ev as KeyboardEvent);
       }
     });
   });

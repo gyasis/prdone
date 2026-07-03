@@ -15,7 +15,25 @@ let kanbanServer: KanbanServerHandle | undefined;
 let autoRefreshTimer: NodeJS.Timeout | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  // T024 + T025: WebviewViewProvider for the activity-bar PRD view.
+  // Lazy-start (once) the bundled Express server that serves the kanban board,
+  // the Work Hub sidebar (/sidebar) and its data (/api/hub). Shared by
+  // prd.openKanban, prd.openHub, and the sidebar's Hub toggle so there's a
+  // single server + single deactivate() cleanup path.
+  const ensureServer = async (): Promise<KanbanServerHandle> => {
+    if (!kanbanServer) {
+      const cfg = vscode.workspace.getConfiguration('prd');
+      const basePort = cfg.get<number>('kanbanBasePort') ?? 7373;
+      kanbanServer = await startKanbanServer({
+        extensionRoot: context.extensionUri.fsPath,
+        basePort
+      });
+    }
+    return kanbanServer;
+  };
+
+  // T024 + T025: WebviewViewProvider for the activity-bar PRD view. The Work Hub
+  // renders natively inside this view (assembler runs in the extension host), so
+  // it needs no server — ensureServer stays for the browser kanban / openHub only.
   sidebarProvider = new SidebarProvider(context.extensionUri);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
@@ -56,15 +74,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('prd.openKanban', async () => {
       try {
-        if (!kanbanServer) {
-          const cfg = vscode.workspace.getConfiguration('prd');
-          const basePort = cfg.get<number>('kanbanBasePort') ?? 7373;
-          kanbanServer = await startKanbanServer({
-            extensionRoot: context.extensionUri.fsPath,
-            basePort
-          });
-        }
-        await vscode.env.openExternal(vscode.Uri.parse(kanbanServer.url));
+        const server = await ensureServer();
+        await vscode.env.openExternal(vscode.Uri.parse(server.url));
       } catch (err) {
         vscode.window.showErrorMessage(
           `Could not start kanban server: ${(err as Error).message}`
@@ -79,15 +90,8 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('prd.openHub', async () => {
       try {
-        if (!kanbanServer) {
-          const cfg = vscode.workspace.getConfiguration('prd');
-          const basePort = cfg.get<number>('kanbanBasePort') ?? 7373;
-          kanbanServer = await startKanbanServer({
-            extensionRoot: context.extensionUri.fsPath,
-            basePort
-          });
-        }
-        const url = kanbanServer.url.replace(/\/$/, '') + '/sidebar';
+        const server = await ensureServer();
+        const url = server.url.replace(/\/$/, '') + '/sidebar';
         const target = await vscode.env.asExternalUri(vscode.Uri.parse(url));
         // Prefer an in-IDE webview panel (the "IDE browser"); a visible
         // "↗ Browser" button falls back to the external browser.

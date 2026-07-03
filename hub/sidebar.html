@@ -14,10 +14,10 @@
   *{scrollbar-width:none}                              /* invisible scrollbars everywhere */
   *::-webkit-scrollbar{width:0;height:0;display:none}
   html,body{overflow-x:hidden}
-  body{margin:0;background:#0a0c0f;color:var(--ink);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased;
-       display:flex;justify-content:center;padding:22px 0}
-  .sb{width:380px;height:calc(100vh - 44px);background:var(--bg);border:1px solid var(--line);border-radius:10px;
-      display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:13px;-webkit-font-smoothing:antialiased}
+  /* Full-bleed: fills the host panel/sidebar edge-to-edge (no floating card). */
+  .sb{width:100%;height:100vh;background:var(--bg);border:none;border-radius:0;
+      display:flex;flex-direction:column;overflow:hidden}
   .sb-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);flex:0 0 auto}
   .sb-head .wm{font:800 15px var(--sans);letter-spacing:-.02em}.sb-head .wm b{color:var(--prd)}
   .sb-head .repo{font:600 12px var(--mono);color:var(--repoColor,var(--accent));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -73,7 +73,7 @@
 </style></head>
 <body>
 <div class="sb">
-  <div class="sb-head"><span class="wm">👑 <b>prdone</b></span><span class="repo" id="repoName"></span><span class="cnt" id="cnt"></span></div>
+  <div class="sb-head"><span class="wm"><b>prdone</b></span><span class="repo" id="repoName"></span><span class="cnt" id="cnt"></span></div>
   <div class="tabs" id="tabs"></div>
   <div class="chips-zone" id="chipsZone">
     <div class="chips-bar" id="chipsBar"></div>
@@ -82,9 +82,11 @@
   <div class="list" id="list"><div class="loading">loading…</div></div>
 </div>
 <script>
-let DATA=null, REPO='twicedata_intra', TAB='PRDs', REPOS=[];
+let DATA=null, REPO=(window.__HUB_REPO__||'twicedata_intra'), TAB='PRDs', REPOS=[];
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+// Native-webview action bridge (set by the extension shim); no-op when served standalone.
+const act=(m)=>{if(window.__prdAction)window.__prdAction(m);};
 const PALETTE=['#4ea3ff','#a98bff','#3ad0b0','#f5a35b','#ef6f6f','#5cc98a','#e6c15a','#e87fb0','#7dd3fc','#c084fc','#fb923c','#4ade80','#f472b6','#38bdf8','#a3e635','#fbbf24'];
 const repoColor=n=>{let h=0;for(const ch of String(n))h=(h*31+ch.charCodeAt(0))>>>0;return PALETTE[h%PALETTE.length];};
 const setRepoColor=()=>document.querySelector('.sb').style.setProperty('--repoColor',repoColor(REPO));
@@ -132,6 +134,8 @@ function renderTabs(){
 function renderList(){
   const d=DATA||{}, L=document.getElementById('list'); L.innerHTML='';
   const sel=n=>{n.onclick=()=>{document.querySelectorAll('.tile').forEach(x=>x.classList.remove('sel'));n.classList.add('sel');};};
+  // Like sel(), but also fires an item action (open/copy/manage) to the extension.
+  const bind=(n,m)=>{n.onclick=()=>{document.querySelectorAll('.tile').forEach(x=>x.classList.remove('sel'));n.classList.add('sel');act(m);};};
   if(TAB==='Work'){
     const w=d.work||{};
     L.appendChild(el('div','work',`branch <b>${esc(w.branch||'?')}</b> · ${w.worktrees||0} worktree(s) · ${w.dirty||0} dirty`));
@@ -141,17 +145,17 @@ function renderList(){
     const byPrd=(d.links&&d.links.byPrd)||{};
     (d.prds||[]).forEach(p=>{const cnt=(byPrd[p.id]||[]).length;const n=el('div','tile',
       `<div class="top"><span class="glyph g-${esc(p.tier)}">${esc(p.tier)}</span><span class="g-age">${cnt} issue${cnt!==1?'s':''}</span></div>
-       <div class="ttl">${esc(p.title||p.id)}</div><div class="sub">${esc(p.id)}</div>`);sel(n);L.appendChild(n);});
+       <div class="ttl">${esc(p.title||p.id)}</div><div class="sub">${esc(p.id)}</div>`);bind(n,{type:'HUB_ITEM_ACTION',kind:'prd',id:p.id,tier:p.tier,status:p.status});L.appendChild(n);});
     if(!(d.prds||[]).length)L.appendChild(el('div','empty','<div class="big">▤</div>no PRDs for this repo'));
   } else if(TAB==='Issues'){
     const tById={};(d.prds||[]).forEach(p=>tById[p.id]=p.title||p.id);
     (d.issues||[]).forEach(i=>{const refs=(i.prdRefs||[]);
       const link=refs.length?`<span class="lnk">↑ ${esc((tById[refs[0]]||refs[0]).slice(0,26))}</span>`:`<span class="lnk none">no PRD</span>`;
       const n=el('div','tile',`<div class="top"><span class="g-num">#${i.number}</span><span class="g-age">${esc((i.labels||[]).join(' '))}</span></div>
-       <div class="ttl">${esc(i.title||'')}</div>${link}`);sel(n);L.appendChild(n);});
+       <div class="ttl">${esc(i.title||'')}</div>${link}`);bind(n,{type:'HUB_ITEM_ACTION',kind:'issue',url:i.url,number:i.number});L.appendChild(n);});
     if(!(d.issues||[]).length)L.appendChild(el('div','empty','<div class="big">✓</div>no open issues'));
   } else if(TAB==='Handoffs'){
-    (d.handoffs||[]).forEach(h=>{const n=el('div','tile',`<div class="sub" style="white-space:normal">⇲ ${esc(h.file)}</div>`);sel(n);L.appendChild(n);});
+    (d.handoffs||[]).forEach(h=>{const n=el('div','tile',`<div class="sub" style="white-space:normal">⇲ ${esc(h.file)}</div>`);bind(n,{type:'HUB_ITEM_ACTION',kind:'handoff',file:h.file});L.appendChild(n);});
     if(!(d.handoffs||[]).length)L.appendChild(el('div','empty','<div class="big">⇲</div>no handoffs linked<br><span style="font:10px var(--mono);color:var(--faint)">/handoff → ~/handoff/</span>'));
   } else {
     const c=d.connections||{uses:[],usedBy:[],references:[]};

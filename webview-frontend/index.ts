@@ -11,10 +11,12 @@ import { renderTileGrid, setVSCodeApi, type VSCodeApi } from './tileGrid';
 import { applyFilters, defaultFilterState, type FilterState } from './filters';
 import { renderKanbanBoard } from './kanbanBoard';
 import { renderGallery } from './galleryView';
+import { renderHubView, hubSetPrds } from './hubView';
+import { renderStation } from './appStation';
 
 declare global {
   interface Window {
-    __PRD_RENDER_MODE__?: 'sidebar' | 'kanban' | 'gallery';
+    __PRD_RENDER_MODE__?: 'sidebar' | 'kanban' | 'gallery' | 'app';
     acquireVsCodeApi?: () => VSCodeApi;
   }
 }
@@ -38,7 +40,15 @@ if ((window as unknown as Record<string, boolean>)[__BOOT_KEY]) {
     bootKanban();
   } else if (mode === 'gallery') {
     bootGallery();
+  } else if (mode === 'app') {
+    void bootApp();
   }
+}
+
+async function bootApp(): Promise<void> {
+  const app = document.getElementById('app');
+  if (!app) return;
+  await renderStation(app);
 }
 
 function bootSidebar(): void {
@@ -51,8 +61,8 @@ function bootSidebar(): void {
   app.innerHTML = `
     <div class="sidebar-shell" data-theme="dark">
       <header class="sidebar-title">
-        <span class="wordmark">PRDs</span>
-        <span class="subtitle">PRD VISUALIZER</span>
+        <span class="wordmark">prdone</span>
+        <span class="subtitle">WORK HUB</span>
         <div class="title-actions">
           <button id="refresh-visualizer" class="title-action refresh-pill" type="button" title="Refresh PRDs (last refreshed: never)" aria-label="Refresh PRD list">
             <svg class="refresh-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -70,6 +80,11 @@ function bootSidebar(): void {
           </button>
         </div>
       </header>
+      <div class="mode-row" role="tablist" aria-label="Sidebar view">
+        <button class="mode-tab active" data-sidebar-mode="prds" role="tab" aria-selected="true" type="button">PRDs</button>
+        <button class="mode-tab" data-sidebar-mode="hub" role="tab" aria-selected="false" type="button" title="Cross-repo Work Hub: work · issues · handoffs · PRDs · links">⇲ Work Hub</button>
+      </div>
+      <div id="grid-view">
       <div class="toolbar">
         <input id="search" class="search-input" type="search" placeholder="Search PRDs by title, id, tag…" />
         <div class="filter-chips" id="filter-chips">
@@ -110,6 +125,8 @@ function bootSidebar(): void {
       </section>
       <div class="tiles" id="tiles"></div>
       <div id="error-banner" class="error-banner" hidden></div>
+      </div>
+      <div id="hub-view" hidden></div>
     </div>`;
 
   // Local state.
@@ -314,6 +331,27 @@ function bootSidebar(): void {
   // Title-bar action: Open Kanban → ask the extension to run prd.openKanban.
   document.getElementById('open-kanban')?.addEventListener('click', () => {
     api?.postMessage({ type: 'OPEN_KANBAN', payload: {} });
+  });
+
+  // Sidebar view toggle: PRDs (this grid) ⇄ Work Hub — both are surfaces of THIS
+  // same bundle. No webview swap: we just show/hide two containers and lazy-render
+  // the hub (which reuses renderTileGrid + openDetail for PRD rows).
+  const gridViewEl = document.getElementById('grid-view');
+  const hubViewEl = document.getElementById('hub-view');
+  function setSurface(target: 'prds' | 'hub'): void {
+    document.querySelectorAll<HTMLElement>('.mode-row .mode-tab').forEach((b) =>
+      b.classList.toggle('active', b.getAttribute('data-sidebar-mode') === target));
+    if (target === 'hub') {
+      gridViewEl?.setAttribute('hidden', '');
+      hubViewEl?.removeAttribute('hidden');
+      if (hubViewEl) renderHubView(hubViewEl, allPrds); // always render with latest PRDs
+    } else {
+      hubViewEl?.setAttribute('hidden', '');
+      gridViewEl?.removeAttribute('hidden');
+    }
+  }
+  document.querySelectorAll<HTMLButtonElement>('.mode-row .mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setSurface((btn.getAttribute('data-sidebar-mode') as 'prds' | 'hub') || 'prds'));
   });
 
   // B2.1: Refresh button — post REFRESH; extension re-runs `prd summary --json`
@@ -521,6 +559,8 @@ function bootSidebar(): void {
       updateRefreshLabel();
       const t0 = performance.now();
       repaint();
+      // Keep the hub's PRD tiles in sync if it's the visible surface.
+      if (hubViewEl && !hubViewEl.hasAttribute('hidden')) hubSetPrds(allPrds);
       const t1 = performance.now();
       console.log(`[prd] first-paint ${Math.round(t1 - t0)}ms (${msg.payload.length} prds)`);
     } else if (msg.type === 'SHOW_ERROR') {
