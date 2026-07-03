@@ -20,10 +20,16 @@ function discover(force){
   // GITHUB (gyasis)
   try{ JSON.parse(sh('gh',['repo','list','gyasis','--limit','400','--json','name,pushedAt,isArchived'])||'[]')
     .forEach(r=>{const e=ensure(r.name);e.github=true;e.ghName=r.name;e.isArchived=!!r.isArchived;e.pushedAt=Date.parse(r.pushedAt)||0;e.sources.add('github');}); }catch(e){}
-  // GITEA
-  let tok=''; { const m=/password=(.+)/.exec(bash("printf 'protocol=http\\nhost=localhost:3939\\n\\n' | git credential fill")); if(m) tok=m[1].trim(); }
-  if(tok){ try{ (JSON.parse(sh('curl',['-s','-m8','-H',`Authorization: token ${tok}`,'http://localhost:3939/api/v1/repos/search?limit=200'])||'{}').data||[])
-    .forEach(r=>{const n=r.full_name.split('/').pop();const e=ensure(n);e.gitea=true;e.giteaFull=r.full_name;e.giteaOpenIssues=r.open_issues_count||0;e.giteaUpdated=Date.parse(r.updated_at)||0;e.sources.add('gitea');}); }catch(e){} }
+  // GITEA — optional self-hosted instance. Host comes from PRD_GITEA_HOST
+  // (e.g. "host:port") so no private address is baked into (public) source;
+  // empty/unset = Gitea discovery is simply skipped. The token is read at
+  // request time from the git credential store, never stored here.
+  const GITEA = process.env.PRD_GITEA_HOST || '';
+  if (GITEA) {
+    let tok=''; { const m=/password=(.+)/.exec(bash(`printf 'protocol=http\\nhost=${GITEA}\\n\\n' | git credential fill`)); if(m) tok=m[1].trim(); }
+    if(tok){ try{ (JSON.parse(sh('curl',['-s','-m8','-H',`Authorization: token ${tok}`,`http://${GITEA}/api/v1/repos/search?limit=200`])||'{}').data||[])
+      .forEach(r=>{const n=r.full_name.split('/').pop();const e=ensure(n);e.gitea=true;e.giteaFull=r.full_name;e.giteaOpenIssues=r.open_issues_count||0;e.giteaUpdated=Date.parse(r.updated_at)||0;e.sources.add('gitea');}); }catch(e){} }
+  }
   // PRD repo: tags
   try{ const cnt={}; JSON.parse(sh(path.join(HOME,'bin/prd'),['summary','--json'])||'[]')
     .forEach(p=>(p.tags||'').split(',').forEach(t=>{t=t.trim();if(t.startsWith('repo:')){const n=t.slice(5);cnt[n]=(cnt[n]||0)+1;}}));
