@@ -47,13 +47,19 @@ function issuesForRepo(entry){
   try { const j=JSON.parse(sh(ISSUE_LIST,['--tracker',entry.tracker,'--repo',entry.ownerRepo,'--state','open','--limit','60'])); return Array.isArray(j)?j:[]; }
   catch(e){ return []; }
 }
-function handoffsForRepo(key){
+function handoffsForRepo(key, prds){
   if (!fs.existsSync(HANDOFF)) return [];
+  const prdIds = (prds||[]).map(p=>p.id);
+  const slug = /([a-z0-9_]{6,}_\d{4}-\d{2}-\d{2})/g;
   const out=[];
   for (const f of fs.readdirSync(HANDOFF)){ if(!f.endsWith('.md')) continue;
     let body=''; try{ body=fs.readFileSync(path.join(HANDOFF,f),'utf8'); }catch(e){}
-    if (norm(f).includes(norm(key)) || body.toLowerCase().includes(key.toLowerCase()))
-      out.push({ file:f, mtime: fs.statSync(path.join(HANDOFF,f)).mtimeMs });
+    if (norm(f).includes(norm(key)) || body.toLowerCase().includes(key.toLowerCase())){
+      // link handoff -> PRDs by scanning file+body for PRD slugs (mirrors issues)
+      const refs=new Set();
+      for (const m of (f+'\n'+body).matchAll(slug)) if (prdIds.includes(m[1])) refs.add(m[1]);
+      out.push({ file:f, mtime: fs.statSync(path.join(HANDOFF,f)).mtimeMs, prdRefs:[...refs] });
+    }
   }
   return out.sort((a,b)=>b.mtime-a.mtime).slice(0,6);
 }
@@ -76,7 +82,7 @@ function assembleHub(key){
   const work = gitWork(entry.localPath);
   const prds = prdsForRepo(entry.key, entry.localPath);
   const issues = issuesForRepo(entry);
-  const handoffs = handoffsForRepo(entry.key);
+  const handoffs = handoffsForRepo(entry.key, prds);
   const links = linkIssuesToPrds(issues, prds);
   const connections = connectionsFor(entry.key, discover().filter(e=>e.relevant && (e.tracker || e.prdCount>0)), { issues });
   return { ok:true, repo:entry.key, ownerRepo:entry.ownerRepo||'(no tracker)', tracker:entry.tracker||'none', localPath:entry.localPath, work, prds, issues, handoffs, links, connections };

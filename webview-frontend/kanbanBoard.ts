@@ -35,7 +35,7 @@ export function renderKanbanBoard(container: HTMLElement, prds: Prd[]): void {
 
   container.innerHTML = `
     <header class="kanban-header">
-      <h1 class="kanban-wordmark">PRDs<span class="dot">.</span></h1>
+      <h1 class="kanban-wordmark">prdone<span class="dot">.</span></h1>
       <div class="kanban-meta">
         <span>${prds.length} records</span>
         <span class="sep">·</span>

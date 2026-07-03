@@ -30,3 +30,4 @@ design-explorations/**
 # NOTE: bundle/** is intentionally NOT ignored — it carries the prd CLI +
 # skills payload that the `prd.installSkills` command (and install.sh) copy
 # into the user's home. Excluding it ships a .vsix whose installer cannot work.
+.playwright-mcp/

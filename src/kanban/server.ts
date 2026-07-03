@@ -12,6 +12,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import * as http from 'http';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
+import { execFile } from 'child_process';
 import { refresh as refreshPrdSource } from '../data/prdSource';
 import { findFreePort } from '../lib/findFreePort';
 import type { KanbanApiPayload } from '../types';
@@ -94,8 +96,94 @@ export async function startKanbanServer(opts: StartOptions): Promise<KanbanServe
     res.set('Cache-Control', 'no-store').sendFile(path.join(hubDir, 'hub.html'));
   });
 
-  // GET / — serves the kanban shell.
+  // ── Full-size "Search & Read Station" (Phase 1) ──────────────────────────
+  // The wide-screen app. Read-only. Two new endpoints power it:
+  //   /api/raw?path=   read a PRD/handoff .md (path-safe, whitelisted roots)
+  //   /api/search?q=   cross-repo full-text via ripgrep over the same roots
+  // ALLOWED_ROOTS gates BOTH — the #1 risk is a ?path=/etc/passwd traversal.
+  const home = process.env.HOME ?? os.homedir();
+  const prdRoot = process.env.PRD_ROOT ?? path.join(home, 'dev', 'prd');
+  const handoffRoot = path.join(home, 'handoff');
+  const ALLOWED_ROOTS = [prdRoot, handoffRoot];
+  const underRoot = (p: string): boolean =>
+    ALLOWED_ROOTS.some((r) => p === r || p.startsWith(r + path.sep));
+  const classify = (p: string): 'prd' | 'handoff' | 'other' =>
+    p.startsWith(handoffRoot + path.sep) ? 'handoff' : p.startsWith(prdRoot + path.sep) ? 'prd' : 'other';
+
+  app.get('/api/raw', (req: Request, res: Response) => {
+    const raw = typeof req.query.path === 'string' ? req.query.path : '';
+    if (!raw) { res.status(400).type('text/plain').send('missing ?path='); return; }
+    let resolved: string;
+    try { resolved = path.resolve(raw); } catch { res.status(400).type('text/plain').send('invalid path'); return; }
+    if (!underRoot(resolved)) { res.status(403).type('text/plain').send('forbidden: outside allowed roots'); return; }
+    if (!resolved.endsWith('.md')) { res.status(403).type('text/plain').send('forbidden: only .md files'); return; }
+    if (!fs.existsSync(resolved)) { res.status(404).type('text/plain').send('not found'); return; }
+    const st = fs.statSync(resolved);
+    res.set('Cache-Control', 'no-store').json({
+      ok: true, path: resolved, type: classify(resolved),
+      content: fs.readFileSync(resolved, 'utf8'), mtime: st.mtimeMs, size: st.size
+    });
+  });
+
+  app.get('/api/search', (req: Request, res: Response) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!q) { res.set('Cache-Control', 'no-store').json({ ok: true, q, results: [] }); return; }
+    // ripgrep over the whitelisted roots, markdown only, JSON output for robust parsing.
+    execFile('rg', ['--json', '-i', '--max-count', '8', '-g', '*.md', '-g', '!node_modules', '-e', q, ...ALLOWED_ROOTS],
+      { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
+      (err, stdout) => {
+        // rg exit 1 = "no matches" (not an error); ENOENT = rg not installed.
+        if (err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+          res.status(500).json({ ok: false, error: 'ripgrep (rg) not found on PATH' }); return;
+        }
+        const byFile: Record<string, { path: string; type: string; count: number; matches: { line: number; text: string }[] }> = {};
+        for (const line of stdout.split('\n')) {
+          if (!line) continue;
+          let obj: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };
+          try { obj = JSON.parse(line); } catch { continue; }
+          if (obj.type !== 'match' || !obj.data?.path?.text) continue;
+          const p = obj.data.path.text;
+          const e = (byFile[p] ??= { path: p, type: classify(p), count: 0, matches: [] });
+          e.count++;
+          if (e.matches.length < 3) e.matches.push({ line: obj.data.line_number ?? 0, text: (obj.data.lines?.text ?? '').trim().slice(0, 200) });
+        }
+        // PRDs first, then handoffs, then by match count.
+        const results = Object.values(byFile).sort((a, b) =>
+          (a.type === b.type ? b.count - a.count : a.type === 'prd' ? -1 : b.type === 'prd' ? 1 : 0)
+        ).slice(0, 60);
+        res.set('Cache-Control', 'no-store').json({ ok: true, q, results });
+      });
+  });
+
+  // GET /api/pulse — every PRD/handoff .md with its created + last-touched times,
+  // for the activity histogram ("Pulse Strip"). Filesystem stat only; no bodies.
+  app.get('/api/pulse', (_req: Request, res: Response) => {
+    const items: { path: string; type: string; mtime: number; birthtime: number }[] = [];
+    const walk = (root: string): void => {
+      if (!fs.existsSync(root)) return;
+      const stack = [root];
+      while (stack.length) {
+        const d = stack.pop() as string;
+        let ents: fs.Dirent[];
+        try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { continue; }
+        for (const e of ents) {
+          const fp = path.join(d, e.name);
+          if (e.isDirectory()) { if (e.name !== 'node_modules' && e.name !== '.git') stack.push(fp); }
+          else if (e.name.endsWith('.md')) {
+            try { const st = fs.statSync(fp); items.push({ path: fp, type: classify(fp), mtime: st.mtimeMs, birthtime: (st.birthtimeMs || st.ctimeMs) }); } catch { /* skip */ }
+          }
+        }
+      }
+    };
+    ALLOWED_ROOTS.forEach(walk);
+    res.set('Cache-Control', 'no-store').json({ ok: true, items });
+  });
+
+  // GET / — the full-size Station (Search & Read). The kanban board moves to /kanban.
   app.get('/', (_req: Request, res: Response) => {
+    res.set('Cache-Control', 'no-store').sendFile(path.join(opts.extensionRoot, 'kanban-static', 'app.html'));
+  });
+  app.get('/kanban', (_req: Request, res: Response) => {
     res.set('Cache-Control', 'no-store').sendFile(path.join(opts.extensionRoot, 'kanban-static', 'kanban.html'));
   });
 

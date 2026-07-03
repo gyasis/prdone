@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { refresh as refreshPrdSource } from '../data/prdSource';
 import { listHandoffs } from '../data/handoffSource';
 import { handleWebviewAction } from '../actions/messageHandler';
@@ -26,8 +27,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
   private viewDisposables: vscode.Disposable[] = [];
   private disposed = false;
 
+  // Lazily-required cross-repo hub assembler (hub/assemble.cjs). Same module the
+  // kanban server uses; called in the extension host so the Work Hub renders
+  // NATIVELY in the sidebar (no server, no iframe) — data flows over webview
+  // message-passing, exactly like the PRD grid.
+  private hubModCache?: {
+    assembleHub: (repo: string) => unknown;
+    listRepos: (all: boolean, refresh: boolean) => unknown;
+  };
+  // Short-TTL memo so re-opening the hub / switching tabs is instant instead of
+  // re-shelling to gh/git/prd every time.
+  private hubDataCache = new Map<string, { ts: number; data: unknown }>();
+  private reposCache?: { ts: number; data: unknown };
+  private static readonly HUB_TTL_MS = 60_000;
+
   constructor(private readonly extensionUri: vscode.Uri) {
-    this.outputChannel = vscode.window.createOutputChannel('PRD Visualizer');
+    this.outputChannel = vscode.window.createOutputChannel('prdone');
+  }
+
+  /** eval('require') keeps esbuild from bundling the .cjs; same trick as server.ts. */
+  private hubMod(): NonNullable<SidebarProvider['hubModCache']> {
+    if (!this.hubModCache) {
+      const nodeRequire = eval('require') as NodeRequire;
+      this.hubModCache = nodeRequire(
+        path.join(this.extensionUri.fsPath, 'hub', 'assemble.cjs')
+      );
+    }
+    return this.hubModCache!;
   }
 
   /** Called by VSCode when the extension is deactivated. */
@@ -72,6 +98,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
     // Track the subscription so it is disposed when the view goes away.
     this.viewDisposables.push(
       view.webview.onDidReceiveMessage((msg: unknown) => {
+        // Intercept hub data requests before the validated PRD action union.
+        if (this.tryHandleHubMessage(msg)) return;
         handleWebviewAction(msg, {
           sendResponse: (resp) => this.sendToWebview(resp),
           triggerRefresh: () => this.refresh()
@@ -86,6 +114,60 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
 
     // Initial data fetch.
     this.refresh();
+  }
+
+  /** Hub data + light open actions from the bundle's hub surface. PRD row clicks
+   *  do NOT come here — they reuse openDetail (OPEN_FILE / COPY_COMMAND) via the
+   *  validated action union, exactly like the grid. Returns true if handled. */
+  private tryHandleHubMessage(msg: unknown): boolean {
+    if (typeof msg !== 'object' || msg === null) return false;
+    const m = msg as { type?: unknown; reqId?: unknown; repo?: unknown };
+    if (m.type === 'HUB_REPOS_REQUEST') {
+      this.respondHub(m.reqId, () => {
+        const now = Date.now();
+        if (!this.reposCache || now - this.reposCache.ts > SidebarProvider.HUB_TTL_MS) {
+          this.reposCache = { ts: now, data: this.hubMod().listRepos(false, false) };
+        }
+        return this.reposCache.data;
+      });
+      return true;
+    }
+    if (m.type === 'HUB_DATA_REQUEST') {
+      const repo = String(m.repo ?? '');
+      this.respondHub(m.reqId, () => {
+        const now = Date.now();
+        const hit = this.hubDataCache.get(repo);
+        if (hit && now - hit.ts < SidebarProvider.HUB_TTL_MS) return hit.data;
+        const data = this.hubMod().assembleHub(repo);
+        this.hubDataCache.set(repo, { ts: now, data });
+        return data;
+      });
+      return true;
+    }
+    if (m.type === 'HUB_OPEN_URL') {
+      const url = String((m as { url?: unknown }).url ?? '');
+      if (url) void vscode.env.openExternal(vscode.Uri.parse(url));
+      return true;
+    }
+    if (m.type === 'HUB_OPEN_HANDOFF') {
+      const file = String((m as { file?: unknown }).file ?? '');
+      if (file) void vscode.window.showTextDocument(vscode.Uri.file(path.join(os.homedir(), 'handoff', file)));
+      return true;
+    }
+    return false;
+  }
+
+  /** Run a hub producer and post {reqId, payload} back to the webview; on error
+   *  post an {error} payload so the view can surface it instead of hanging. */
+  private respondHub(reqId: unknown, produce: () => unknown): void {
+    let payload: unknown;
+    try {
+      payload = produce();
+    } catch (err) {
+      payload = { ok: false, error: (err as Error).message };
+      this.outputChannel.appendLine(`[prd] hub request failed: ${(err as Error).message}`);
+    }
+    this.view?.webview.postMessage({ reqId, payload });
   }
 
   /** Public so extension.ts can wire onDidSaveTextDocument (T045) to it. */
@@ -235,10 +317,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
 </head>
 <body>
 <div id="app"></div>
-<script nonce="${nonce}">window.__PRD_RENDER_MODE__ = 'sidebar';</script>
+<script nonce="${nonce}">window.__PRD_RENDER_MODE__ = 'sidebar'; window.__PRD_HUB_REPO__ = ${JSON.stringify(this.currentRepo())};</script>
 <script nonce="${nonce}" src="${bundleUri}"></script>
 </body>
 </html>`;
+  }
+
+  /** The repo the user is working in (workspace folder basename) — the hub opens
+   *  on this by default instead of a hardcoded repo. */
+  private currentRepo(): string {
+    const ws = vscode.workspace.workspaceFolders?.[0];
+    return ws ? path.basename(ws.uri.fsPath) : 'twicedata_intra';
   }
 }
 
