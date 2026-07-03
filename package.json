@@ -2,7 +2,7 @@
   "name": "prdone",
   "displayName": "prdone",
   "description": "Read-only sidebar grid + browser kanban for the prd lifecycle CLI. Renders ~85 PRDs across scratch/archive/library tiers with copy-pasteable Claude Code commands.",
-  "version": "0.8.0",
+  "version": "0.10.0",
   "publisher": "gyasis",
   "private": true,
   "license": "MIT",

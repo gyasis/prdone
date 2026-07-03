@@ -4,17 +4,24 @@
 # into the current user's home. Self-contained: clone the repo, run this script,
 # done. No build step, no network, no dependencies beyond bash + coreutils.
 #
-#   prd CLI   ->  ~/bin/prd                         (chmod 755)
-#   skills    ->  ~/.claude/skills/<name>/SKILL.md  (Claude Code dir-form)
+#   prd CLI    ->  ~/bin/prd                         (chmod 755)
+#   skills     ->  ~/.claude/skills/<name>/SKILL.md  (Claude Code dir-form)
+#   extension  ->  every VSCode-family IDE on PATH (code / cursor / codium /
+#                  code-insiders / positron) via `<ide> --install-extension`
 #
 # Existing files are backed up to <name>.bak before overwrite. Re-runnable.
 #
 # Usage:
-#   ./install.sh                 install CLI + all skills
+#   ./install.sh                 install CLI + skills + extension (into every IDE found)
 #   ./install.sh --dry-run       print what would happen, change nothing
-#   ./install.sh --skills-only   install skills, skip the CLI
-#   ./install.sh --cli-only      install the CLI, skip skills
+#   ./install.sh --skills-only   only the skills
+#   ./install.sh --cli-only      only the CLI
+#   ./install.sh --ext-only      only the extension (into every IDE found)
+#   ./install.sh --no-ext        CLI + skills, skip the extension
 #   ./install.sh --help
+#
+# CLI + skills need only bash + coreutils. The extension step uses a packaged
+# .vsix (dist/prdone-*.vsix); if none exists it builds one via npm (needs node).
 #
 set -euo pipefail
 
@@ -37,13 +44,16 @@ BIN_DST="$HOME/bin/prd"
 DRY_RUN=0
 DO_CLI=1
 DO_SKILLS=1
+DO_EXT=1
 
 # --- args --------------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)     DRY_RUN=1 ;;
-    --skills-only) DO_CLI=0 ;;
-    --cli-only)    DO_SKILLS=0 ;;
+    --skills-only) DO_CLI=0; DO_EXT=0 ;;
+    --cli-only)    DO_SKILLS=0; DO_EXT=0 ;;
+    --ext-only)    DO_CLI=0; DO_SKILLS=0 ;;
+    --no-ext)      DO_EXT=0 ;;
     -h|--help)
       # print the leading comment block (skip the shebang line), strip "# "
       awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$SOURCE"
@@ -113,6 +123,36 @@ if [ "$DO_SKILLS" -eq 1 ]; then
     run "cp '$src' '$dst'"
     ok "$name"; installed=$((installed+1))
   done
+  say ""
+fi
+
+# --- extension (into every VSCode-family IDE on PATH) ------------------------
+if [ "$DO_EXT" -eq 1 ]; then
+  say "extension -> every VSCode-family IDE on PATH"
+  # Find a packaged .vsix; build one via npm if none exists (needs node/npm).
+  VSIX="$(ls -1t "$REPO_ROOT"/dist/prdone-*.vsix 2>/dev/null | head -1 || true)"
+  if [ -z "$VSIX" ] && command -v npm >/dev/null 2>&1; then
+    note "no packaged .vsix found — building one (npm install + package)…"
+    run "(cd '$REPO_ROOT' && npm install --silent && npm run package >/dev/null 2>&1)"
+    VSIX="$(ls -1t "$REPO_ROOT"/dist/prdone-*.vsix 2>/dev/null | head -1 || true)"
+  fi
+  if [ -z "$VSIX" ]; then
+    warn "no dist/prdone-*.vsix and npm unavailable — skipping extension."
+    warn "build it first: npm install && npm run package"
+  else
+    note "using $(basename "$VSIX")"
+    ide_found=0
+    for cli in code cursor code-insiders codium code-oss positron; do
+      command -v "$cli" >/dev/null 2>&1 || continue
+      ide_found=1
+      run "'$cli' --install-extension '$VSIX' --force"
+      ok "installed into $cli"; installed=$((installed+1))
+    done
+    if [ "$ide_found" -eq 0 ]; then
+      warn "no VSCode-family IDE CLI found on PATH (code / cursor / codium / …)."
+      warn "install one, or enable its shell command (VSCode: 'Shell Command: Install code command')."
+    fi
+  fi
   say ""
 fi
 

@@ -1943,6 +1943,12 @@ body { font-family:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 .hub-conn-panel .hcp-rel { font:600 9.5px ui-monospace, monospace; color:var(--vscode-descriptionForeground); }
 .hub-conn-panel .hcp-empty { color:var(--vscode-disabledForeground); font-size:11.5px; padding:4px 0; }
 
+/* Prominent "Open .md in IDE" button in the detail panel. */
+.detail-open { display:inline-flex; align-items:center; gap:6px; margin:2px 0 12px; font:600 11.5px var(--vscode-font-family); color:var(--vscode-button-foreground); background:var(--vscode-button-background); border:0; border-radius:6px; padding:6px 12px; cursor:pointer; }
+.detail-open:hover { background:var(--vscode-button-hoverBackground); }
+.detail-pickup { font:600 11px var(--vscode-font-family); color:var(--vscode-charts-blue); margin:2px 0 8px; }
+.detail-diary { font:11px ui-monospace, monospace; color:var(--vscode-descriptionForeground); background:var(--vscode-textBlockQuote-background); border:1px solid var(--vscode-panel-border); border-radius:6px; padding:8px 10px; max-height:200px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin-bottom:10px; }
+
 /* ══ Full-size "Search & Read Station" (browser app; uses browser-overrides tokens) ══ */
 .station { display:grid; grid-template-columns:320px minmax(0,1fr) 360px; grid-template-rows:minmax(0,1fr) auto; height:100vh; background:var(--bg); color:var(--ink); }
 .station *::-webkit-scrollbar { width:8px; height:8px; }
