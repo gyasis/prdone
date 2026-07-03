@@ -35,11 +35,29 @@ function gitWork(repoDir){
   const recent = sh('git',['-C',repoDir,'log','--oneline','-3']).trim().split('\n').filter(Boolean);
   return { branch, worktrees:wt, dirty, recent, exists:true };
 }
-function prdsForRepo(key, repoDir){
+// Which repo(s) a PRD belongs to. Association is by what the PRD is ABOUT, not
+// the folder it was created in: PRIMARY = the declared `**Repo:**` frontmatter
+// line; FALLBACK = a `repo:<name>` tag. (The old creation-folder signal —
+// each repo's .memory/active-prds.json — is intentionally dropped.)
+const _repoCache = new Map(); // path -> { mtime, repos:[...] }
+function reposForPrd(p){
+  const tagRepos = () => (p.tags||'').split(',').map(t=>t.trim()).filter(t=>t.startsWith('repo:')).map(t=>t.slice(5));
+  try {
+    const st = fs.statSync(p.path);
+    const hit = _repoCache.get(p.path);
+    if (hit && hit.mtime === st.mtimeMs) return hit.repos;
+    const head = fs.readFileSync(p.path,'utf8').slice(0, 4000);
+    let repos = [];
+    const m = head.match(/^\s*\*\*Repo:\*\*\s*`?([A-Za-z0-9._\/-]+?)`?\s*$/m);
+    if (m && m[1] && m[1].toLowerCase() !== 'none') repos = [m[1].trim()]; // PRIMARY
+    if (!repos.length) repos = tagRepos();                                // FALLBACK
+    _repoCache.set(p.path, { mtime: st.mtimeMs, repos });
+    return repos;
+  } catch(e){ return tagRepos(); }
+}
+function prdsForRepo(key){
   let all=[]; try { all = JSON.parse(sh(PRD,['summary','--json','--with-tree'])); } catch(e){}
-  const ids = new Set();
-  if (repoDir){ const ap=path.join(repoDir,'.memory','active-prds.json'); if (fs.existsSync(ap)){ try{ (JSON.parse(fs.readFileSync(ap,'utf8')).active||[]).forEach(e=>ids.add(e.id)); }catch(e){} } }
-  return all.filter(p => ids.has(p.id) || (p.tags||'').split(',').some(t=>t.trim()==='repo:'+key))
+  return all.filter(p => reposForPrd(p).includes(key))
             .map(p => ({ id:p.id, title:p.title, tier:p.tier, status:p.status, age_days:p.age_days, significance:p.significance, tags:p.tags }));
 }
 function issuesForRepo(entry){
@@ -75,8 +93,23 @@ function linkIssuesToPrds(issues, prds){
   return { byPrd, orphans };
 }
 
+// Not every PRD is about a repo — some are machine tasks, calendar reads,
+// one-off processes. Those live in an "(unassigned)" bucket, first-class.
+const UNASSIGNED = '(unassigned)';
+function unassignedPrds(){
+  let all=[]; try { all = JSON.parse(sh(PRD,['summary','--json','--with-tree'])); } catch(e){}
+  return all.filter(p => reposForPrd(p).length === 0)
+            .map(p => ({ id:p.id, title:p.title, tier:p.tier, status:p.status, age_days:p.age_days, significance:p.significance, tags:p.tags }));
+}
+
 function assembleHub(key){
   key = key || 'twicedata_intra';
+  if (key === UNASSIGNED) {
+    const prds = unassignedPrds();
+    return { ok:true, repo:UNASSIGNED, ownerRepo:'— not tied to a repo —', tracker:'none', localPath:null,
+             work:{ branch:null, worktrees:0, dirty:0, recent:[] }, prds, issues:[], handoffs:[],
+             links:{ byPrd:{}, orphans:[] }, connections:{ uses:[], usedBy:[], references:[] } };
+  }
   const entry = resolveRepo(key);
   if (!entry) return { ok:false, error:'unknown repo '+key };
   const work = gitWork(entry.localPath);
@@ -92,6 +125,9 @@ function listRepos(showAll, refresh){
   const list = all.filter(e=>showAll || e.relevant)
     .sort((a,b)=> (b.lastActivity||0)-(a.lastActivity||0))
     .map(e=>({ name:e.name, tracker:e.tracker, ownerRepo:e.ownerRepo, hasLocal:!!e.localPath, prdCount:e.prdCount, giteaOpenIssues:e.giteaOpenIssues, sources:e.sources }));
+  // First-class "(unassigned)" bucket for PRDs not tied to any repo.
+  let unassignedCount = 0; try { unassignedCount = unassignedPrds().length; } catch(e){}
+  if (unassignedCount) list.push({ name:UNASSIGNED, tracker:'none', ownerRepo:'—', hasLocal:false, prdCount:unassignedCount, giteaOpenIssues:0, sources:['prd'] });
   return { total:all.length, shown:list.length, repos:list };
 }
 module.exports = { assembleHub, listRepos, resolveRepo };

@@ -24,6 +24,7 @@ export function openDetail(prd: Prd, allPrds: Prd[] = [prd]): void {
     <button class="detail-close" type="button" aria-label="Close detail">×</button>
     <div class="detail-id">${escape(prd.path)}</div>
     <h2 class="detail-title">${escape(prd.title)}</h2>
+    <button class="detail-open" type="button" title="Open the .md file in the editor">📂 Open .md in IDE</button>
 
     <div class="detail-section-label">Status</div>
     <div class="detail-status">
@@ -93,6 +94,12 @@ export function openDetail(prd: Prd, allPrds: Prd[] = [prd]): void {
 
   // Close handler.
   panel.querySelector('.detail-close')?.addEventListener('click', closeDetail);
+
+  // Prominent "Open .md in IDE" — opens the raw markdown file in an editor tab.
+  panel.querySelector('.detail-open')?.addEventListener('click', () => {
+    const api = getVSCodeApi();
+    if (api) api.postMessage({ type: 'OPEN_FILE', payload: { path: prd.path } });
+  });
 
   // Open-file action via vscode message channel.
   panel.querySelector('.cmd[data-kind="open-file"]')?.addEventListener('click', (ev) => {

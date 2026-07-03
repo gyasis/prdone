@@ -201,12 +201,17 @@ function renderList(): void {
       const badge = linked.length
         ? `<span class="hub-link">↑ ${esc((prdById.get(linked[0]) as Prd).title.slice(0, 28))}</span>`
         : `<span class="hub-link none">no PRD link</span>`;
-      return `<div class="hub-tile" data-i="${i}" tabindex="0"><div class="hub-tt">⇲ ${esc(x.file)}</div>${badge}</div>`;
+      return `<div class="hub-tile" data-i="${i}" tabindex="0"><div class="hub-tt">⇲ ${esc(x.file)}</div>${badge}<button class="hub-ext" data-file="${esc(x.file)}" title="Open handoff .md in IDE" type="button">📂</button></div>`;
     }).join('');
+    el.querySelectorAll<HTMLElement>('.hub-ext[data-file]').forEach((b) => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const f = b.dataset.file; if (f) getVSCodeApi()?.postMessage({ type: 'HUB_OPEN_HANDOFF', file: f });
+    }));
     el.querySelectorAll<HTMLElement>('.hub-tile').forEach((t) => t.addEventListener('click', () => {
       const x = hs[Number(t.dataset.i)];
       const linked = (x.prdRefs || []).filter((id) => prdById.has(id));
-      // Primary click = open the connected PRD's detail (the connection is the point).
+      // Primary click opens the connected PRD (the connection is the point); the
+      // 📂 button opens the handoff's own .md in the IDE.
       if (linked.length && openPrd(linked[0])) return;
       getVSCodeApi()?.postMessage({ type: 'HUB_OPEN_HANDOFF', file: x.file });
     }));
