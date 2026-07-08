@@ -46,6 +46,8 @@
   .prdname{font:13px var(--mono)}.prdname b{color:var(--ink)}.prdslug{color:var(--faint)}
   .prdright{margin-left:auto;display:flex;align-items:center;gap:10px}
   .tier{font:600 10px var(--mono);color:var(--faint);border:1px solid var(--line);padding:2px 7px;border-radius:20px}
+  .repotag{font:600 9.5px var(--mono);color:var(--teal);border:1px solid #234a44;padding:2px 6px;border-radius:20px}
+  .repotag.none{color:var(--faint);border-color:var(--line);border-style:dashed}
   .count{font:600 11px var(--mono);color:var(--dim)}.count b{color:var(--accent)}
   .issuelist{display:none;border-top:1px solid var(--line);padding:6px 0}.prdcard.open .issuelist{display:block}
   .irow{display:flex;align-items:center;gap:11px;padding:8px 16px 8px 40px}.irow:hover{background:var(--panel2)}
@@ -66,11 +68,26 @@
   .lnk.prd{color:var(--prd);border-color:#3a3255}.lnk.issue{color:var(--accent);border-color:#2a3550}.lnk.none{color:var(--faint);border-style:dashed}
   .empty{color:var(--faint);font-size:12.5px;text-align:center;padding:30px 12px;line-height:1.6}.empty .big{font-size:26px;opacity:.4}
   .loading{padding:60px;text-align:center;color:var(--dim);font:14px var(--mono)}
+  /* cross-tab search */
+  .search{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:7px 11px;font:600 12.5px var(--sans);min-width:230px}
+  .search:focus{outline:none;border-color:var(--accent)}
+  .searchhint{color:var(--faint);font:12.5px var(--mono);padding:40px;text-align:center}
+  .rhead{margin:16px 0 14px;color:var(--dim);font:600 13px var(--sans)}.rhead b{color:var(--ink)}
+  .rgroup{margin-bottom:18px}
+  .rgroup .gh{display:flex;gap:8px;align-items:center;margin:0 0 8px}
+  .rtype{font:700 9px var(--mono);letter-spacing:.5px;padding:2px 6px;border-radius:5px;text-transform:uppercase}
+  .rtype.prd{background:#241d3a;color:var(--prd)}.rtype.handoff{background:#16302a;color:var(--teal)}.rtype.issue{background:#1c2836;color:var(--accent)}.rtype.other{background:#20262e;color:var(--dim)}
+  .rrow{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:8px}
+  .rrow .rt{display:flex;gap:9px;align-items:baseline}
+  .rrow .rname{font:12.5px var(--mono);color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rrow .rc{font:600 10.5px var(--mono);color:var(--faint)}
+  .rrow .snip{font:11.5px var(--mono);color:var(--dim);margin-top:6px;word-break:break-word}.rrow .snip b{color:var(--warn)}
 </style></head>
 <body><div class="wrap">
   <div class="topbar">
     <div class="brand"><b>prdone</b> · Work Hub</div>
     <span class="tag">PROTOTYPE · live data</span>
+    <input id="q" class="search" placeholder="⌕ search all PRDs + handoffs…" autocomplete="off" spellcheck="false">
     <div class="repo-switch">
       <span class="tag" id="repoCount" style="border:none">repo</span>
       <select id="repoSel"></select>
@@ -81,19 +98,91 @@
 </div>
 <script>
 const glyphTier={scratch:'scratch',archive:'archive',library:'library'};
-let DATA=null, VIEW='A';
+let DATA=null, VIEW='A', SEARCHING=false, qTimer=null;
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+// ── Cross-tab search: full-text over every PRD + handoff, all repos ──────────
+const hi=(text,q)=>{const e=esc(text);try{const rx=new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');return e.replace(rx,'<b>$1</b>');}catch(_){return e;}};
+function bindSearch(){
+  const q=document.getElementById('q');
+  q.addEventListener('input',()=>{clearTimeout(qTimer);const v=q.value.trim();qTimer=setTimeout(()=>{v?doSearch(v):exitSearch();},220);});
+  q.addEventListener('keydown',e=>{if(e.key==='Escape'){q.value='';exitSearch();}});
+}
+// Cross-repo open issues, fetched once + cached client-side, so issue titles
+// join the file-content search without a tracker round-trip per keystroke.
+let ALL_ISSUES=null;
+async function ensureIssues(){
+  if(ALL_ISSUES) return ALL_ISSUES;
+  try{ const j=await (await fetch('/api/hub?repo='+encodeURIComponent('(all-issues)'))).json(); ALL_ISSUES=(j&&j.issues)||[]; }
+  catch(_){ ALL_ISSUES=[]; }
+  return ALL_ISSUES;
+}
+const filterIssues=(list,v)=>{const lc=v.toLowerCase();return list.filter(i=>String(i.title||'').toLowerCase().includes(lc)||('#'+i.number)===v);};
+async function doSearch(v){
+  SEARCHING=true;
+  const body=document.getElementById('body');
+  body.innerHTML='<div class="loading">searching “'+esc(v)+'”…</div>';
+  let res; try{res=await (await fetch('/api/search?q='+encodeURIComponent(v))).json();}catch(e){body.innerHTML='<div class="searchhint">search failed — is the server running?</div>';return;}
+  if(!SEARCHING) return; // user cleared while in flight
+  const files=(res&&res.results)||[];
+  // Paint PRD + handoff hits immediately; issues require reaching each repo, so
+  // fold them in when they land (null = still connecting).
+  renderSearch(v,files, ALL_ISSUES?filterIssues(ALL_ISSUES,v):null);
+  if(!ALL_ISSUES){
+    const all=await ensureIssues();
+    if(!SEARCHING || document.getElementById('q').value.trim()!==v) return;
+    renderSearch(v,files,filterIssues(all,v));
+  }
+}
+function exitSearch(){SEARCHING=false;if(DATA)render();}
+function renderSearch(q,results,issues){
+  const pending=(issues===null||issues===undefined);
+  issues=issues||[];
+  const body=document.getElementById('body');
+  if(!results.length && !issues.length && !pending){body.innerHTML='<div class="searchhint">no matches for “'+esc(q)+'” across PRDs + handoffs + issues</div>';return;}
+  const groups={prd:[],handoff:[],other:[]};
+  results.forEach(r=>(groups[r.type]||groups.other).push(r));
+  const hits=results.reduce((n,r)=>n+(r.count||0),0);
+  const wrap=el('div','results');
+  const head=el('div','rhead');
+  const issueBit=pending?'<span style="color:var(--faint)">connecting to repos for issues…</span>':`${issues.length} issue${issues.length!==1?'s':''}`;
+  head.innerHTML=`${results.length} file${results.length!==1?'s':''} · ${issueBit} · ${hits} content match${hits!==1?'es':''} for <b>${esc(q)}</b> <span style="color:var(--faint);font:12px var(--mono)">· PRDs + handoffs + issues, every repo · Esc to clear</span>`;
+  wrap.appendChild(head);
+  // Issues first (title match), then PRD/handoff file-content matches.
+  if(issues.length){
+    const g=el('div','rgroup');
+    g.appendChild(el('div','gh',`<span class="rtype issue">Issues</span> <span style="color:var(--faint);font:600 11px var(--mono)">${issues.length}</span>`));
+    issues.forEach(i=>{
+      g.appendChild(el('div','rrow',`<div class="rt"><span class="rtype issue">#${esc(i.number)}</span><span class="rname">${hi(i.title||'',q)}</span><span class="rc">${esc(i.repo||'')}</span></div>`));
+    });
+    wrap.appendChild(g);
+  }
+  [['prd','PRDs'],['handoff','Handoffs'],['other','Other']].forEach(([k,label])=>{
+    const arr=groups[k]; if(!arr.length) return;
+    const g=el('div','rgroup');
+    g.appendChild(el('div','gh',`<span class="rtype ${k}">${esc(label)}</span> <span style="color:var(--faint);font:600 11px var(--mono)">${arr.length}</span>`));
+    arr.forEach(r=>{
+      const base=String(r.path||'').split('/').pop();
+      const snips=(r.matches||[]).map(m=>`<div class="snip">${hi(m.text||'',q)}</div>`).join('');
+      g.appendChild(el('div','rrow',`<div class="rt"><span class="rtype ${esc(r.type)}">${esc(r.type)}</span><span class="rname">${esc(base)}</span><span class="rc">${r.count} hit${r.count!==1?'s':''}</span></div>${snips}`));
+    });
+    wrap.appendChild(g);
+  });
+  body.innerHTML=''; body.appendChild(wrap);
+}
 
 async function loadRepos(){
   const data=await (await fetch('/api/repos')).json();
   const sel=document.getElementById('repoSel');
+  const hasAll=data.repos.some(r=>r.name==='(all)');
+  const dflt=hasAll?'(all)':'twicedata_intra';
   sel.innerHTML=data.repos.map(r=>{
     const hint=[r.tracker||'—', r.prdCount?(r.prdCount+'p'):'', r.giteaOpenIssues?(r.giteaOpenIssues+'i'):''].filter(Boolean).join(' ');
-    return `<option value="${esc(r.name)}" ${r.name==='twicedata_intra'?'selected':''}>${esc(r.name)} · ${esc(hint)}</option>`;
+    return `<option value="${esc(r.name)}" ${r.name===dflt?'selected':''}>${esc(r.name)} · ${esc(hint)}</option>`;
   }).join('');
   const tag=document.getElementById('repoCount'); if(tag) tag.textContent=data.shown+' of '+data.total+' repos';
-  sel.onchange=()=>load(sel.value);
+  sel.onchange=()=>{const q=document.getElementById('q');if(q)q.value='';SEARCHING=false;load(sel.value);};
 }
 async function load(repo){
   document.getElementById('body').innerHTML='<div class="loading">Loading '+esc(repo)+'…</div>';
@@ -133,6 +222,8 @@ function render(){
   const vB=el('div');vB.id='vB';vB.className=VIEW==='B'?'on':'';
   // ---- Variant A: PRD spine ----
   const im=issueByNum();
+  // In the "(all)" aggregate, stamp each card with the repo(s) it belongs to.
+  const repoTags=p=>{ if(!d.aggregate) return ''; const rs=(p.repos||[]); return rs.length?rs.map(r=>`<span class="repotag">${esc(r)}</span>`).join(''):'<span class="repotag none">unassigned</span>'; };
   const spinePrds=[...linkedPrd, ...emptyPrd];
   spinePrds.forEach(p=>{
     const nums=byPrd[p.id]||[];
@@ -140,7 +231,7 @@ function render(){
     const kind=`<span class="kind ${esc(p.tier)}">${esc(p.tier)}</span>`;
     card.innerHTML=`<div class="prdhead"><span class="caret">▶</span>${kind}
       <span class="prdname"><b>${esc(p.title||p.id)}</b> <span class="prdslug">· ${esc(p.id)}</span></span>
-      <div class="prdright"><span class="tier">${esc(p.status)}</span><span class="count"><b>${nums.length}</b> issue${nums.length!==1?'s':''}</span></div></div>`;
+      <div class="prdright">${repoTags(p)}<span class="tier">${esc(p.status)}</span><span class="count"><b>${nums.length}</b> issue${nums.length!==1?'s':''}</span></div></div>`;
     const list=el('div','issuelist');
     if(nums.length){ nums.forEach(n=>{const i=im[n]||{};list.appendChild(el('div','irow',`<span class="inum">#${n}</span><span class="ititle">${esc(i.title||'')}</span>`));}); }
     else { list.appendChild(el('div','noissues','No issues linked yet — a /issue-king suggest target.')); }
@@ -179,7 +270,14 @@ function render(){
   b.appendChild(vA);b.appendChild(vB);
   const body=document.getElementById('body');body.innerHTML='';body.appendChild(b);
   document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{VIEW=t.dataset.v;document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.v===VIEW));document.getElementById('vA').className=VIEW==='A'?'on':'';document.getElementById('vB').className=VIEW==='B'?'on':'';});
+  // In the "(all)" view, pull every repo's issues in the background (connects to
+  // each repo, so it's lazy) and re-render once they land — without blocking the
+  // initial PRD paint.
+  if(d.repo==='(all)' && !d._issuesLoaded){
+    d._issuesLoaded=true;
+    ensureIssues().then(list=>{ if(DATA===d && !SEARCHING){ d.issues=list.map(i=>({number:i.number,title:i.title,prdRefs:[]})); render(); } });
+  }
 }
-(async()=>{await loadRepos();const p=new URLSearchParams(location.search).get('repo');const sel=document.getElementById('repoSel');if(p){for(const o of sel.options){if(o.value.toLowerCase()===p.toLowerCase()){sel.value=o.value;break;}}}await load(sel.value||'twicedata_intra');})();
+(async()=>{bindSearch();await loadRepos();const p=new URLSearchParams(location.search).get('repo');const sel=document.getElementById('repoSel');if(p){for(const o of sel.options){if(o.value.toLowerCase()===p.toLowerCase()){sel.value=o.value;break;}}}await load(sel.value||'(all)');})();
 </script>
 </body></html>

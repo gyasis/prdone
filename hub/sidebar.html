@@ -70,10 +70,19 @@
   .cdot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
   .empty{color:var(--faint);text-align:center;padding:32px 12px;font-size:12px;line-height:1.6}.empty .big{font-size:24px;opacity:.4}
   .loading{color:var(--dim);text-align:center;padding:40px;font:12px var(--mono)}
+  /* cross-tab search */
+  .sb-searchrow{flex:0 0 auto;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .sb-search{width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:7px;padding:7px 10px;font:600 12px var(--sans)}
+  .sb-search:focus{outline:none;border-color:var(--accent)}
+  .ghd{font:700 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin:10px 4px 5px}
+  .rglyph{font:700 8.5px var(--mono);letter-spacing:.4px;padding:1px 5px;border-radius:4px;text-transform:uppercase}
+  .rglyph.prd{background:#241d3a;color:var(--prd)}.rglyph.handoff{background:#16302a;color:var(--teal)}.rglyph.issue{background:#1c2836;color:var(--accent)}
+  .rsnip{font:10px var(--mono);color:var(--faint);margin-top:4px;word-break:break-word}.rsnip b{color:var(--warn)}
 </style></head>
 <body>
 <div class="sb">
   <div class="sb-head"><span class="wm"><b>prdone</b></span><span class="repo" id="repoName"></span><span class="cnt" id="cnt"></span></div>
+  <div class="sb-searchrow"><input id="q" class="sb-search" placeholder="⌕ search PRDs + handoffs + issues…" autocomplete="off" spellcheck="false"></div>
   <div class="tabs" id="tabs"></div>
   <div class="chips-zone" id="chipsZone">
     <div class="chips-bar" id="chipsBar"></div>
@@ -83,8 +92,57 @@
 </div>
 <script>
 let DATA=null, REPO=(window.__HUB_REPO__||'twicedata_intra'), TAB='PRDs', REPOS=[];
+let SEARCHING=false, qTimer=null, ALL_ISSUES=null;
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const hi=(text,q)=>{const e=esc(text);try{const rx=new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig');return e.replace(rx,'<b>$1</b>');}catch(_){return e;}};
+// ── Cross-tab search: PRD + handoff file content AND issue titles, all repos ──
+async function ensureIssues(){
+  if(ALL_ISSUES) return ALL_ISSUES;
+  try{ const j=await (await fetch('/api/hub?repo='+encodeURIComponent('(all-issues)'))).json(); ALL_ISSUES=(j&&j.issues)||[]; }catch(_){ ALL_ISSUES=[]; }
+  return ALL_ISSUES;
+}
+function bindSearch(){
+  const q=document.getElementById('q');
+  q.addEventListener('input',()=>{clearTimeout(qTimer);const v=q.value.trim();qTimer=setTimeout(()=>{v?doSearch(v):exitSearch();},220);});
+  q.addEventListener('keydown',e=>{if(e.key==='Escape'){q.value='';exitSearch();}});
+}
+const filterIssues=(list,v)=>{const lc=v.toLowerCase();return list.filter(i=>String(i.title||'').toLowerCase().includes(lc)||('#'+i.number)===v);};
+async function doSearch(v){
+  SEARCHING=true;
+  const L=document.getElementById('list'); L.innerHTML='<div class="loading">searching “'+esc(v)+'”…</div>';
+  let res; try{res=await (await fetch('/api/search?q='+encodeURIComponent(v))).json();}catch(e){L.innerHTML='<div class="empty">search failed</div>';return;}
+  if(!SEARCHING) return;
+  const files=(res&&res.results)||[];
+  renderSearch(v,files, ALL_ISSUES?filterIssues(ALL_ISSUES,v):null);
+  if(!ALL_ISSUES){
+    const all=await ensureIssues();
+    if(!SEARCHING || document.getElementById('q').value.trim()!==v) return;
+    renderSearch(v,files,filterIssues(all,v));
+  }
+}
+function exitSearch(){SEARCHING=false;renderList();}
+function renderSearch(q,results,issues){
+  const pending=(issues===null||issues===undefined);
+  issues=issues||[];
+  const L=document.getElementById('list'); L.innerHTML='';
+  if(!results.length && !issues.length && !pending){L.appendChild(el('div','empty','<div class="big">⌕</div>no matches for “'+esc(q)+'”'));return;}
+  const groups={prd:[],handoff:[],other:[]};
+  results.forEach(r=>(groups[r.type]||groups.other).push(r));
+  if(pending){ L.appendChild(el('div','ghd','Issues · connecting to repos…')); }
+  if(issues.length){
+    L.appendChild(el('div','ghd','Issues · '+issues.length));
+    issues.forEach(i=>{const n=el('div','tile',`<div class="top"><span class="rglyph issue">issue</span><span class="g-num">#${esc(i.number)}</span><span class="g-age">${esc(i.repo||'')}</span></div><div class="ttl">${hi(i.title||'',q)}</div>`);n.onclick=()=>act({type:'HUB_ITEM_ACTION',kind:'issue',url:i.url,number:i.number});L.appendChild(n);});
+  }
+  [['prd','PRDs'],['handoff','Handoffs'],['other','Other']].forEach(([k,label])=>{
+    const arr=groups[k]; if(!arr.length) return;
+    L.appendChild(el('div','ghd',label+' · '+arr.length));
+    arr.forEach(r=>{const base=String(r.path||'').split('/').pop();
+      const snips=(r.matches||[]).map(m=>`<div class="rsnip">${hi(m.text||'',q)}</div>`).join('');
+      const n=el('div','tile',`<div class="top"><span class="rglyph ${esc(k)}">${esc(k)}</span><span class="g-age" style="max-width:40%">${r.count} hit${r.count!==1?'s':''}</span></div><div class="sub" style="white-space:normal">${esc(base)}</div>${snips}`);
+      n.onclick=()=>act({type:'HUB_ITEM_ACTION',kind:k,file:base,path:r.path});L.appendChild(n);});
+  });
+}
 // Native-webview action bridge (set by the extension shim); no-op when served standalone.
 const act=(m)=>{if(window.__prdAction)window.__prdAction(m);};
 const PALETTE=['#4ea3ff','#a98bff','#3ad0b0','#f5a35b','#ef6f6f','#5cc98a','#e6c15a','#e87fb0','#7dd3fc','#c084fc','#fb923c','#4ade80','#f472b6','#38bdf8','#a3e635','#fbbf24'];
@@ -116,6 +174,7 @@ function renderDrawer(){
   REPOS.forEach(r=>dr.appendChild(mkChip(r,r.name===REPO)));
 }
 async function load(){
+  const qi=document.getElementById('q'); if(qi) qi.value=''; SEARCHING=false;
   document.getElementById('list').innerHTML='<div class="loading">loading '+esc(REPO)+'…</div>';
   DATA=await (await fetch('/api/hub?repo='+encodeURIComponent(REPO))).json();
   renderTabs(); renderList();
@@ -132,6 +191,7 @@ function renderTabs(){
   });
 }
 function renderList(){
+  SEARCHING=false;
   const d=DATA||{}, L=document.getElementById('list'); L.innerHTML='';
   const sel=n=>{n.onclick=()=>{document.querySelectorAll('.tile').forEach(x=>x.classList.remove('sel'));n.classList.add('sel');};};
   // Like sel(), but also fires an item action (open/copy/manage) to the extension.
@@ -168,6 +228,6 @@ function renderList(){
     if(!c.uses.length&&!c.usedBy.length&&!c.references.length)L.appendChild(el('div','empty','<div class="big">⇄</div>no detected connections'));
   }
 }
-(async()=>{const q=new URLSearchParams(location.search);if(q.get('repo'))REPO=q.get('repo');if(q.get('tab'))TAB=q.get('tab');setRepoColor();await loadChips();await load();})();
+(async()=>{bindSearch();const q=new URLSearchParams(location.search);if(q.get('repo'))REPO=q.get('repo');if(q.get('tab'))TAB=q.get('tab');setRepoColor();await loadChips();await load();})();
 </script>
 </body></html>

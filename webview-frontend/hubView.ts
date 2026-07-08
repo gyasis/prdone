@@ -66,6 +66,12 @@ let tab: Tab = 'PRDs';
 let hub: HubData | null = null;
 let repos: RepoEntry[] = [];
 let root: HTMLElement | null = null;
+// Cross-tab search state.
+let searching = false;
+let searchTimer: number | undefined;
+let searchSeq = 0;
+interface HubFileHit { path: string; type: string; count: number; matches: { line: number; text: string }[] }
+interface HubSearchResult { ok?: boolean; q: string; files: HubFileHit[]; issues: HubIssue[]; issuesPending?: boolean }
 // Multi-select: cmd/ctrl/shift-click PRD rows to build a set, then see the
 // connections AMONG the selected files. Plain click stays = openDetail.
 const selected = new Set<string>();
@@ -81,12 +87,14 @@ export function renderHubView(container: HTMLElement, currentPrds: Prd[]): void 
         <span class="hub-repo" id="hub-repo">${esc(repo)}</span>
         <span class="hub-cnt" id="hub-cnt"></span>
       </div>
+      <div class="hub-searchrow"><input class="hub-search" id="hub-q" type="text" placeholder="⌕ search PRDs + handoffs + issues…" autocomplete="off" spellcheck="false" /></div>
       <div class="hub-tabs" id="hub-tabs"></div>
       <div class="hub-repos" id="hub-repos"></div>
       <div class="hub-list" id="hub-list"><div class="hub-loading">loading…</div></div>
     </div>`;
   renderTabs();
   renderRepoBar();
+  bindSearch();
   void loadRepos();
   void load();
 }
@@ -95,7 +103,15 @@ export function renderHubView(container: HTMLElement, currentPrds: Prd[]): void 
  *  is visible) so PRD tiles + connection lookups stay fresh. */
 export function hubSetPrds(currentPrds: Prd[]): void {
   allPrds = currentPrds;
-  if (root && tab === 'PRDs') renderList();
+  if (root && tab === 'PRDs' && !searching) renderList();
+}
+
+/** Clear the search box + state (called when switching repo/tab). */
+function resetSearch(): void {
+  searching = false;
+  searchSeq++;
+  const inp = root?.querySelector('#hub-q') as HTMLInputElement | null;
+  if (inp) inp.value = '';
 }
 
 function counts(): Record<Tab, number | string> {
@@ -118,6 +134,7 @@ function renderTabs(): void {
   el.querySelectorAll<HTMLElement>('.hub-tab').forEach((b) => b.addEventListener('click', () => {
     tab = b.dataset.tab as Tab;
     selected.clear();
+    resetSearch();
     renderTabs();
     renderList();
   }));
@@ -150,11 +167,94 @@ function renderRepoBar(): void {
 
 async function load(): Promise<void> {
   selected.clear();
+  resetSearch();
   const list = root?.querySelector('#hub-list');
   if (list) list.innerHTML = `<div class="hub-loading">loading ${esc(repo)}…</div>`;
   hub = await req<HubData>('HUB_DATA_REQUEST', { repo });
   renderTabs();
   renderList();
+}
+
+// --- cross-tab search (files via ripgrep + issue titles, from the extension) ---
+function bindSearch(): void {
+  const input = root?.querySelector('#hub-q') as HTMLInputElement | null;
+  if (!input) return;
+  input.addEventListener('input', () => {
+    if (searchTimer) window.clearTimeout(searchTimer);
+    const v = input.value.trim();
+    searchTimer = window.setTimeout(() => { if (v) void doSearch(v); else exitSearch(); }, 220);
+  });
+  input.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Escape') { input.value = ''; exitSearch(); } });
+}
+function exitSearch(): void { searching = false; searchSeq++; renderList(); }
+async function doSearch(q: string): Promise<void> {
+  searching = true;
+  const my = ++searchSeq;
+  const list = root?.querySelector('#hub-list');
+  if (list) list.innerHTML = `<div class="hub-loading">searching “${esc(q)}”…</div>`;
+  const r = await req<HubSearchResult>('HUB_SEARCH_REQUEST', { q });
+  if (!searching || my !== searchSeq) return;
+  renderSearch(q, r?.files || [], r?.issues || [], !!r?.issuesPending);
+  // Issues aggregate connects to each repo; if still warming, re-pull a few times.
+  if (r?.issuesPending) scheduleIssueRefill(q, my, 6);
+}
+function scheduleIssueRefill(q: string, my: number, attempts: number): void {
+  if (attempts <= 0) return;
+  window.setTimeout(async () => {
+    if (!searching || my !== searchSeq) return;
+    const r = await req<HubSearchResult>('HUB_SEARCH_REQUEST', { q });
+    if (!searching || my !== searchSeq) return;
+    renderSearch(q, r?.files || [], r?.issues || [], !!r?.issuesPending);
+    if (r?.issuesPending) scheduleIssueRefill(q, my, attempts - 1);
+  }, 3000);
+}
+function hilite(text: string, q: string): string {
+  const e = esc(text);
+  try { const rx = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'); return e.replace(rx, '<b>$1</b>'); }
+  catch { return e; }
+}
+function fileToPrdId(base: string): string | null {
+  const id = base.replace(/\.md$/, '');
+  return allPrds.some((p) => p.id === id) ? id : null;
+}
+function renderSearch(q: string, files: HubFileHit[], issues: HubIssue[], pending: boolean): void {
+  const el = root?.querySelector('#hub-list') as HTMLElement | null;
+  if (!el) return;
+  const prdById = new Map(allPrds.map((p) => [p.id, p] as const));
+  if (!files.length && !issues.length && !pending) { el.innerHTML = `<div class="hub-empty">no matches for “${esc(q)}”</div>`; return; }
+  const groups: Record<string, HubFileHit[]> = { prd: [], handoff: [], other: [] };
+  files.forEach((f) => (groups[f.type] || groups.other).push(f));
+  let html = '';
+  if (pending) html += `<div class="hub-ghd">Issues · connecting to repos…</div>`;
+  if (issues.length) {
+    html += `<div class="hub-ghd">Issues · ${issues.length}</div>`;
+    html += issues.map((i, k) => `<div class="hub-tile" data-issue="${k}" tabindex="0"><div class="hub-trow"><span class="hub-num">#${esc(i.number)}</span><span class="hub-tt">${hilite(i.title, q)}</span></div>${i.url ? `<button class="hub-ext" data-url="${esc(i.url)}" title="Open issue in browser" type="button">↗</button>` : ''}</div>`).join('');
+  }
+  const label: Record<string, string> = { prd: 'PRDs', handoff: 'Handoffs', other: 'Other' };
+  (['prd', 'handoff', 'other'] as const).forEach((k) => {
+    const arr = groups[k];
+    if (!arr.length) return;
+    html += `<div class="hub-ghd">${label[k]} · ${arr.length}</div>`;
+    html += arr.map((f) => {
+      const base = f.path.split('/').pop() || f.path;
+      const snips = f.matches.map((m) => `<div class="hub-snip">${hilite(m.text, q)}</div>`).join('');
+      const id = fileToPrdId(base);
+      return `<div class="hub-tile" data-file="${esc(f.path)}"${id ? ` data-prd="${esc(id)}"` : ''} tabindex="0"><div class="hub-trow"><span class="hub-tag ${esc(k)}">${esc(k)}</span><span class="hub-tt wrap">${esc(base)}</span><span class="hub-cnt2">${f.count}</span></div>${snips}</div>`;
+    }).join('');
+  });
+  el.innerHTML = html;
+  el.querySelectorAll<HTMLElement>('.hub-ext[data-url]').forEach((b) => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const u = b.dataset.url; if (u) getVSCodeApi()?.postMessage({ type: 'HUB_OPEN_URL', url: u });
+  }));
+  el.querySelectorAll<HTMLElement>('.hub-tile[data-issue]').forEach((t) => t.addEventListener('click', () => {
+    const i = issues[Number(t.dataset.issue)];
+    if (i && i.url) getVSCodeApi()?.postMessage({ type: 'HUB_OPEN_URL', url: i.url });
+  }));
+  el.querySelectorAll<HTMLElement>('.hub-tile[data-prd]').forEach((t) => t.addEventListener('click', () => {
+    const p = prdById.get(t.dataset.prd || '');
+    if (p) openDetail(p, allPrds);
+  }));
 }
 
 function prdsForRepo(): Prd[] {

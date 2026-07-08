@@ -102,8 +102,66 @@ function unassignedPrds(){
             .map(p => ({ id:p.id, title:p.title, tier:p.tier, status:p.status, age_days:p.age_days, significance:p.significance, tags:p.tags }));
 }
 
+// "(all)" — the cross-repo bucket: EVERY PRD on one screen at once, each tagged
+// with the repo(s) it belongs to, so you don't have to click through one repo
+// tag at a time. PRD-centric + handoffs (both local, fast); live issue
+// aggregation across every tracker is intentionally skipped to keep it snappy.
+const ALL = '(all)';
+function allPrds(){
+  let all=[]; try { all = JSON.parse(sh(PRD,['summary','--json','--with-tree'])); } catch(e){}
+  return all.map(p => ({ id:p.id, title:p.title, tier:p.tier, status:p.status, age_days:p.age_days, significance:p.significance, tags:p.tags, repos:reposForPrd(p) }));
+}
+function allHandoffs(){
+  if (!fs.existsSync(HANDOFF)) return [];
+  const out=[];
+  for (const f of fs.readdirSync(HANDOFF)){ if(!f.endsWith('.md')) continue;
+    try { out.push({ file:f, mtime: fs.statSync(path.join(HANDOFF,f)).mtimeMs, prdRefs:[] }); } catch(e){}
+  }
+  return out.sort((a,b)=>b.mtime-a.mtime).slice(0,12);
+}
+// Cross-repo open issues, aggregated once and cached (5-min TTL) — this requires
+// CONNECTING TO EACH REPO's tracker, so it's the slow part; search reuses the
+// cache instead of re-hitting every tracker per keystroke. Only computed when
+// something asks for '(all-issues)'. Source: `issue-list` (multi-tracker) when
+// installed, else `gh issue list` for github-tracked repos.
+const _hasIssueList = (()=>{ try { return fs.existsSync(ISSUE_LIST); } catch(_){ return false; } })();
+function fetchRepoIssues(e){
+  if (_hasIssueList){
+    try { const j = JSON.parse(sh(ISSUE_LIST,['--tracker',e.tracker,'--repo',e.ownerRepo,'--state','open','--limit','60'],{timeout:15000}));
+      if (Array.isArray(j) && j.length) return j.map(i=>({ number:i.number, title:i.title, url:i.url, labels:i.labels||[] })); } catch(_){}
+  }
+  if (e.tracker === 'github'){
+    try { const j = JSON.parse(sh('gh',['issue','list','--repo',e.ownerRepo,'--state','open','--limit','60','--json','number,title,url,labels'],{timeout:15000}));
+      if (Array.isArray(j)) return j.map(i=>({ number:i.number, title:i.title, url:i.url, labels:(i.labels||[]).map(l=>l&&l.name||l) })); } catch(_){}
+  }
+  return [];
+}
+let _allIssuesCache = null;
+function allIssues(){
+  if (_allIssuesCache && (Date.now() - _allIssuesCache.t) < 5*60*1000) return _allIssuesCache.issues;
+  const repos = discover().filter(e => e.relevant && e.tracker && e.ownerRepo);
+  const out = [];
+  for (const e of repos){
+    for (const i of fetchRepoIssues(e)) out.push({ number:i.number, title:i.title, url:i.url, labels:i.labels||[], repo:e.name, tracker:e.tracker });
+  }
+  _allIssuesCache = { t: Date.now(), issues: out };
+  return out;
+}
+
 function assembleHub(key){
   key = key || 'twicedata_intra';
+  if (key === ALL) {
+    const prds = allPrds();
+    const repoCount = new Set(prds.flatMap(p => p.repos || [])).size;
+    return { ok:true, repo:ALL, ownerRepo:`— every repo (${repoCount}) —`, tracker:'all', localPath:null, aggregate:true,
+             work:{ branch:null, worktrees:0, dirty:0, recent:[] }, prds, issues:[], handoffs:allHandoffs(),
+             links:{ byPrd:{}, orphans:[] }, connections:{ uses:[], usedBy:[], references:[] } };
+  }
+  if (key === '(all-issues)') {
+    return { ok:true, repo:'(all-issues)', ownerRepo:'— every repo —', tracker:'all', localPath:null, aggregate:true,
+             work:{ branch:null, worktrees:0, dirty:0, recent:[] }, prds:[], issues:allIssues(), handoffs:[],
+             links:{ byPrd:{}, orphans:[] }, connections:{ uses:[], usedBy:[], references:[] } };
+  }
   if (key === UNASSIGNED) {
     const prds = unassignedPrds();
     return { ok:true, repo:UNASSIGNED, ownerRepo:'— not tied to a repo —', tracker:'none', localPath:null,
@@ -128,6 +186,9 @@ function listRepos(showAll, refresh){
   // First-class "(unassigned)" bucket for PRDs not tied to any repo.
   let unassignedCount = 0; try { unassignedCount = unassignedPrds().length; } catch(e){}
   if (unassignedCount) list.push({ name:UNASSIGNED, tracker:'none', ownerRepo:'—', hasLocal:false, prdCount:unassignedCount, giteaOpenIssues:0, sources:['prd'] });
+  // First-class "(all)" bucket — every PRD across every repo, pinned to the top.
+  let allCount = 0; try { allCount = allPrds().length; } catch(e){}
+  if (allCount) list.unshift({ name:ALL, tracker:'all', ownerRepo:'— every repo —', hasLocal:false, prdCount:allCount, giteaOpenIssues:0, sources:['prd'] });
   return { total:all.length, shown:list.length, repos:list };
 }
 module.exports = { assembleHub, listRepos, resolveRepo };
