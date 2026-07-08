@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as cp from 'child_process';
 import { refresh as refreshPrdSource } from '../data/prdSource';
 import { listHandoffs } from '../data/handoffSource';
 import { handleWebviewAction } from '../actions/messageHandler';
@@ -40,6 +41,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
   private hubDataCache = new Map<string, { ts: number; data: unknown }>();
   private reposCache?: { ts: number; data: unknown };
   private static readonly HUB_TTL_MS = 60_000;
+  // Cross-repo issue titles for hub search. Populated OUT-OF-PROCESS (warmIssues)
+  // because the aggregation shells to gh/git for every repo — running it inline
+  // would freeze the extension host. Cached 5 min; search reuses it.
+  private allIssuesCache?: { ts: number; issues: Array<{ number: number; title: string; url?: string; repo?: string }> };
+  private issuesWarming = false;
+  private static readonly ISSUES_TTL_MS = 5 * 60_000;
 
   constructor(private readonly extensionUri: vscode.Uri) {
     this.outputChannel = vscode.window.createOutputChannel('prdone');
@@ -123,6 +130,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
     if (typeof msg !== 'object' || msg === null) return false;
     const m = msg as { type?: unknown; reqId?: unknown; repo?: unknown };
     if (m.type === 'HUB_REPOS_REQUEST') {
+      // The hub surface just opened — start warming cross-repo issues in the
+      // background so search has them ready without a freeze.
+      this.warmIssues();
       this.respondHub(m.reqId, () => {
         const now = Date.now();
         if (!this.reposCache || now - this.reposCache.ts > SidebarProvider.HUB_TTL_MS) {
@@ -130,6 +140,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
         }
         return this.reposCache.data;
       });
+      return true;
+    }
+    if (m.type === 'HUB_SEARCH_REQUEST') {
+      this.handleHubSearch(m.reqId, String((m as { q?: unknown }).q ?? ''));
       return true;
     }
     if (m.type === 'HUB_DATA_REQUEST') {
@@ -168,6 +182,81 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
       this.outputChannel.appendLine(`[prd] hub request failed: ${(err as Error).message}`);
     }
     this.view?.webview.postMessage({ reqId, payload });
+  }
+
+  /** The whitelisted markdown roots hub search greps: PRDs + handoffs. */
+  private searchRoots(): { roots: string[]; prdRoot: string; handoffRoot: string } {
+    const home = os.homedir();
+    const prdRoot = process.env.PRD_ROOT || path.join(home, 'dev', 'prd');
+    const handoffRoot = path.join(home, 'handoff');
+    return { roots: [prdRoot, handoffRoot], prdRoot, handoffRoot };
+  }
+
+  /** Populate allIssuesCache OUT OF PROCESS so the gh/git fan-out never blocks the
+   *  extension host. Runs assemble.cjs's assembleHub('(all-issues)') in a child
+   *  node process (electron-as-node) and caches the returned issue list. */
+  private warmIssues(): void {
+    if (this.issuesWarming) return;
+    if (this.allIssuesCache && Date.now() - this.allIssuesCache.ts < SidebarProvider.ISSUES_TTL_MS) return;
+    this.issuesWarming = true;
+    const assemblePath = path.join(this.extensionUri.fsPath, 'hub', 'assemble.cjs');
+    const script =
+      `try{const m=require(${JSON.stringify(assemblePath)});` +
+      `const r=m.assembleHub('(all-issues)');` +
+      `process.stdout.write(JSON.stringify((r&&r.issues)||[]));}catch(e){process.stdout.write('[]');}`;
+    cp.execFile(
+      process.execPath, ['-e', script],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, maxBuffer: 32 * 1024 * 1024, timeout: 60_000 },
+      (err, stdout) => {
+        this.issuesWarming = false;
+        if (err) { this.outputChannel.appendLine(`[prd] hub issue warm failed: ${err.message}`); return; }
+        try { this.allIssuesCache = { ts: Date.now(), issues: JSON.parse(String(stdout) || '[]') }; }
+        catch { this.allIssuesCache = { ts: Date.now(), issues: [] }; }
+        this.outputChannel.appendLine(`[prd] hub issues warmed: ${this.allIssuesCache.issues.length}`);
+      }
+    );
+  }
+
+  /** Cross-tab hub search: ripgrep over PRD + handoff markdown (async) folded with
+   *  cross-repo issue-title matches from the warmed cache. Posts a single
+   *  {reqId, payload:{ok,q,files,issues,issuesPending}} back to the webview. */
+  private handleHubSearch(reqId: unknown, q: string): void {
+    const post = (payload: unknown): void => { this.view?.webview.postMessage({ reqId, payload }); };
+    q = q.trim();
+    if (!q) { post({ ok: true, q, files: [], issues: [], issuesPending: false }); return; }
+    this.warmIssues(); // ensure the issue cache is warming if it isn't yet
+    const { roots, prdRoot, handoffRoot } = this.searchRoots();
+    const classify = (p: string): string =>
+      p.startsWith(handoffRoot + path.sep) ? 'handoff' : p.startsWith(prdRoot + path.sep) ? 'prd' : 'other';
+    const lc = q.toLowerCase();
+    const issuesAll = this.allIssuesCache?.issues || [];
+    const issues = issuesAll
+      .filter((i) => String(i.title || '').toLowerCase().includes(lc) || ('#' + i.number) === q)
+      .slice(0, 60);
+    const issuesPending = !this.allIssuesCache;
+    cp.execFile(
+      'rg', ['--json', '-i', '--max-count', '8', '-g', '*.md', '-g', '!node_modules', '-e', q, ...roots],
+      { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
+      (err, stdout) => {
+        const byFile: Record<string, { path: string; type: string; count: number; matches: { line: number; text: string }[] }> = {};
+        if (!(err && (err as NodeJS.ErrnoException).code === 'ENOENT')) {
+          for (const line of String(stdout).split('\n')) {
+            if (!line) continue;
+            let o: { type?: string; data?: { path?: { text?: string }; line_number?: number; lines?: { text?: string } } };
+            try { o = JSON.parse(line); } catch { continue; }
+            if (o.type !== 'match' || !o.data?.path?.text) continue;
+            const p = o.data.path.text;
+            const e = (byFile[p] ??= { path: p, type: classify(p), count: 0, matches: [] });
+            e.count++;
+            if (e.matches.length < 3) e.matches.push({ line: o.data.line_number ?? 0, text: (o.data.lines?.text ?? '').trim().slice(0, 200) });
+          }
+        }
+        const files = Object.values(byFile)
+          .sort((a, b) => (a.type === b.type ? b.count - a.count : a.type === 'prd' ? -1 : b.type === 'prd' ? 1 : 0))
+          .slice(0, 60);
+        post({ ok: true, q, files, issues, issuesPending });
+      }
+    );
   }
 
   /** Public so extension.ts can wire onDidSaveTextDocument (T045) to it. */

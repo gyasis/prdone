@@ -1920,6 +1920,19 @@ body { font-family:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 .hub-sub { font-size:10px; color:var(--vscode-disabledForeground); }
 .hub-loading { color:var(--vscode-descriptionForeground); text-align:center; padding:32px; font:12px ui-monospace, monospace; }
 
+/* Cross-tab search */
+.hub-searchrow { padding:4px 12px 6px; flex:0 0 auto; }
+.hub-search { width:100%; box-sizing:border-box; background:var(--vscode-input-background); color:var(--vscode-input-foreground); border:1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius:6px; padding:5px 9px; font:12px var(--vscode-font-family); }
+.hub-search:focus { outline:1px solid var(--repoColor); outline-offset:-1px; }
+.hub-ghd { font:700 9px ui-monospace, monospace; letter-spacing:.1em; text-transform:uppercase; color:var(--vscode-descriptionForeground); margin:10px 4px 5px; }
+.hub-snip { font:10.5px ui-monospace, monospace; color:var(--vscode-descriptionForeground); margin-top:4px; word-break:break-word; }
+.hub-snip b, .hub-tt b { color:var(--vscode-editorWarning-foreground, #f5a35b); font-weight:700; }
+.hub-tag { font:700 8.5px ui-monospace, monospace; letter-spacing:.4px; text-transform:uppercase; padding:1px 5px; border-radius:4px; flex:0 0 auto; }
+.hub-tag.prd { background:#241d3a; color:#a98bff; }
+.hub-tag.handoff { background:#16302a; color:#3ad0b0; }
+.hub-tag.other { background:var(--vscode-input-background); color:var(--vscode-descriptionForeground); }
+.hub-cnt2 { margin-left:auto; font:600 10px ui-monospace, monospace; color:var(--vscode-descriptionForeground); flex:0 0 auto; }
+
 /* No ugly scrollbars in the hub scroll areas (matches the pilot's clean look). */
 .hub-list, .hub-repos { scrollbar-width: none; }
 .hub-list::-webkit-scrollbar, .hub-repos::-webkit-scrollbar { width:0; height:0; display:none; }
