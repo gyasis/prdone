@@ -47,6 +47,11 @@ SCRATCH="$PRD_ROOT/scratch"
 ARCHIVE="$PRD_ROOT/archive"
 LIBRARY="$PRD_ROOT/library"
 LOCK="/tmp/claude-prd-skill.lock"
+
+# Portable mtime (epoch seconds). BSD/macOS `stat` uses -f %m; GNU/Linux uses -c %Y.
+# Using the GNU form unconditionally broke `prd list` and the `prd new` Decision
+# Rule age checks on macOS (empty output -> "operand expected" arithmetic error).
+_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
 # Sentinel-based owner resolver (PRD prd_active_registry_cross_contamination §8 Rank-1).
 # Walks UP from cwd looking for `.memory/.prd-owner` — the explicit "this dir is a PRD owner"
 # sentinel. Coincidental `.memory/` dirs (e.g. ~/dev/.memory/ with session.json) are SKIPPED
@@ -740,7 +745,7 @@ cmd_new() {
     candidate="$(find_candidate_parent "$branch" "$repo")"
     if [ -n "$candidate" ]; then
       local cand_slug; cand_slug="$(basename "$candidate" .md)"
-      local age_sec=$(( $(date +%s) - $(stat -c %Y "$candidate") ))
+      local age_sec=$(( $(date +%s) - $(_mtime "$candidate") ))
       local overlap; overlap="$(token_overlap_pct "$descriptor" "$cand_slug")"
       # APPEND-NOTE if <4h OR overlap >=50
       # SUB-PRD if mtime <14d
@@ -825,7 +830,7 @@ EOF
   # --root carveout: explicit opt-in for global/root-tier PRDs.
   if [ -z "$OWNER_PATH" ] && [ "$force_root" -eq 0 ]; then
     cat >&2 <<EOF
-prd: WARN — no `.prd-owner` sentinel found walking up from $(pwd).
+prd: WARN — no \`.prd-owner\` sentinel found walking up from $(pwd).
      Without a sentinel this PRD has no legitimate scope and would leak to a fallback registry.
      (This is the bug class that caused the 2026-05-15 cross-contamination.)
 
@@ -1625,7 +1630,7 @@ cmd_list() {
   for f in "$SCRATCH"/*.md; do
     [ -e "$f" ] || continue
     _tag_match "$f" || continue
-    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    local age=$(( ( $(date +%s) - $(_mtime "$f") ) / 86400 ))
     local mark=""; [ $age -ge 14 ] && mark=" ⏸"
     local tags; tags=$(read_tags "$f")
     printf "%-50s  %-8s  %-6s  %s%s\n" "$(basename "$f" .md)" "scratch" "${age}d" "${tags:--}" "$mark"
@@ -1635,7 +1640,7 @@ cmd_list() {
     for f in "$ARCHIVE"/*.md; do
       [ -e "$f" ] || continue
       _tag_match "$f" || continue
-      local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+      local age=$(( ( $(date +%s) - $(_mtime "$f") ) / 86400 ))
       local tags; tags=$(read_tags "$f")
       printf "%-50s  %-8s  %-6s  %s\n" "$(basename "$f" .md)" "archive" "${age}d" "${tags:--}"
     done
@@ -1647,7 +1652,7 @@ cmd_list() {
       [ "$(basename "$f")" = "INDEX.md" ] && continue
       [ "$(basename "$f")" = "README.md" ] && continue
       _tag_match "$f" || continue
-      local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+      local age=$(( ( $(date +%s) - $(_mtime "$f") ) / 86400 ))
       local tags; tags=$(read_tags "$f")
       printf "%-50s  %-8s  %-6s  %s  📚\n" "$(basename "$f" .md)" "library" "${age}d" "${tags:--}"
     done
@@ -2322,7 +2327,7 @@ cmd_find() {
   local cand; cand="$(find_candidate_parent "$branch" "$repo")"
   [ -n "$cand" ] || return 0
   local slug; slug="$(basename "$cand" .md)"
-  local mt; mt="$(stat -c %Y "$cand")"
+  local mt; mt="$(_mtime "$cand")"
   printf '%s\t%s\n' "$slug" "$mt"
 }
 
@@ -2357,7 +2362,7 @@ cmd_sweep() {
   local stale_count=0 very_old_count=0
   for f in "$SCRATCH"/*.md; do
     [ -e "$f" ] || continue
-    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    local age=$(( ( $(date +%s) - $(_mtime "$f") ) / 86400 ))
     if [ $age -ge 14 ] && ! grep -q "^## Resolution" "$f"; then
       echo "⏸ stale ${age}d  $(basename "$f")"
       stale_count=$(( stale_count + 1 ))
@@ -2365,7 +2370,7 @@ cmd_sweep() {
   done
   for f in "$ARCHIVE"/*.md; do
     [ -e "$f" ] || continue
-    local age=$(( ( $(date +%s) - $(stat -c %Y "$f") ) / 86400 ))
+    local age=$(( ( $(date +%s) - $(_mtime "$f") ) / 86400 ))
     if [ $age -ge 30 ]; then
       echo "🗑 old  ${age}d  $(basename "$f") (archive — consider delete or graduate)"
       very_old_count=$(( very_old_count + 1 ))
