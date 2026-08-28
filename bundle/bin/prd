@@ -48,10 +48,11 @@ ARCHIVE="$PRD_ROOT/archive"
 LIBRARY="$PRD_ROOT/library"
 LOCK="/tmp/claude-prd-skill.lock"
 
-# Portable mtime (epoch seconds). BSD/macOS `stat` uses -f %m; GNU/Linux uses -c %Y.
-# Using the GNU form unconditionally broke `prd list` and the `prd new` Decision
-# Rule age checks on macOS (empty output -> "operand expected" arithmetic error).
-_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"; }
+# Portable mtime (epoch seconds). GNU/Linux `stat` uses -c %Y; BSD/macOS uses -f %m.
+# GNU must be tried FIRST: on GNU/Linux `-f` means --file-system, so `stat -f %m`
+# treats %m as a filename, errors, still prints the filesystem block to STDOUT and
+# exits 1 -- so `||` fires and both outputs concatenate, breaking the arithmetic.
+_mtime() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
 # Sentinel-based owner resolver (PRD prd_active_registry_cross_contamination §8 Rank-1).
 # Walks UP from cwd looking for `.memory/.prd-owner` — the explicit "this dir is a PRD owner"
 # sentinel. Coincidental `.memory/` dirs (e.g. ~/dev/.memory/ with session.json) are SKIPPED
@@ -2476,10 +2477,12 @@ cmd_doctor() {
   echo ""
 
   # Sync check: active-prds vs scratch
+  # scratch_count must be set OUTSIDE the if -- the ephemeral-marker check below
+  # uses it and runs whether or not the breadcrumb file exists.
+  local scratch_count=$(ls "$SCRATCH"/*.md 2>/dev/null | wc -l)
   if [ -f "$ACTIVE_JSON" ]; then
     local tracked untracked
     tracked=$(python3 -c "import json; d=json.load(open('$ACTIVE_JSON')); print(len(d.get('active',[])))" 2>/dev/null || echo "?")
-    local scratch_count=$(ls "$SCRATCH"/*.md 2>/dev/null | wc -l)
     echo "Breadcrumb tracks $tracked PRDs; $scratch_count in scratch."
     if [ "$tracked" -lt "$scratch_count" ]; then
       echo "  ⚠️  $((scratch_count - tracked)) untracked scratch PRDs (likely pre-dated /prd new)"
