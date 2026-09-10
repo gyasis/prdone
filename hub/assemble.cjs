@@ -4,12 +4,11 @@
 // gh/git/curl/prd/issue-list — NO npm deps, so it runs inside the extension host.
 const path = require('path'), fs = require('fs'), os = require('os');
 const { execFileSync } = require('child_process');
-const { discover, norm } = require('./discover.cjs');
+const { discover, norm, PRD_BIN, CODE_ROOTS } = require('./discover.cjs');
 const { connectionsFor } = require('./connections.cjs');
 const HOME = os.homedir();
 const ISSUE_LIST = path.join(HOME, '.local/bin/issue-list');
-const PRD = path.join(HOME, 'bin/prd');
-const CODE_ROOT = path.join(HOME, 'Documents/code');
+const PRD = PRD_BIN;
 const HANDOFF = path.join(HOME, 'handoff');
 const TRACKERS = path.join(HOME, '.claude/skills/issue-king/trackers.json');
 const overrides = (()=>{ try { return JSON.parse(fs.readFileSync(TRACKERS,'utf8')).repos; } catch(e){ return {}; } })();
@@ -18,7 +17,10 @@ const sh = (c,a,o={})=>{ try { return execFileSync(c,a,{maxBuffer:32*1024*1024,t
 function guessLocal(name){
   const e = discover().find(r=>norm(r.name)===norm(name));
   if (e && e.localPath) return e.localPath;
-  const p = path.join(CODE_ROOT, name); return fs.existsSync(path.join(p,'.git')) ? p : null;
+  for (const base of CODE_ROOTS){
+    const p = path.join(base, name); if (fs.existsSync(path.join(p,'.git'))) return p;
+  }
+  return null;
 }
 function resolveRepo(key){
   if (overrides[key]) return { key, tracker:overrides[key].tracker, ownerRepo:overrides[key].repo, localPath: guessLocal(key) };
@@ -72,10 +74,13 @@ function handoffsForRepo(key, prds){
   const out=[];
   for (const f of fs.readdirSync(HANDOFF)){ if(!f.endsWith('.md')) continue;
     let body=''; try{ body=fs.readFileSync(path.join(HANDOFF,f),'utf8'); }catch(e){}
-    if (norm(f).includes(norm(key)) || body.toLowerCase().includes(key.toLowerCase())){
-      // link handoff -> PRDs by scanning file+body for PRD slugs (mirrors issues)
-      const refs=new Set();
-      for (const m of (f+'\n'+body).matchAll(slug)) if (prdIds.includes(m[1])) refs.add(m[1]);
+    // link handoff -> PRDs by scanning file+body for PRD slugs (mirrors issues)
+    const refs=new Set();
+    for (const m of (f+'\n'+body).matchAll(slug)) if (prdIds.includes(m[1])) refs.add(m[1]);
+    // Belongs to this repo if it NAMES the repo, or if its PRD does. The
+    // ~/handoff naming convention is <prd-slug>__<ts>.md, so the PRD link is
+    // usually the only signal a handoff carries about a repo.
+    if (refs.size || norm(f).includes(norm(key)) || body.toLowerCase().includes(key.toLowerCase())){
       out.push({ file:f, mtime: fs.statSync(path.join(HANDOFF,f)).mtimeMs, prdRefs:[...refs] });
     }
   }
