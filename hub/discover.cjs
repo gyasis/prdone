@@ -6,6 +6,22 @@ const HOME=os.homedir();
 // gh/git/curl/prd/issue-list resolve when this runs inside the extension host.
 process.env.PATH=[...new Set([...(process.env.PATH||'').split(':'),path.join(HOME,'.local/bin'),path.join(HOME,'bin'),'/usr/local/bin','/opt/homebrew/bin','/usr/bin','/bin'])].filter(Boolean).join(':');
 const sh=(c,a,o={})=>{try{return execFileSync(c,a,{maxBuffer:32*1024*1024,timeout:45000,...o}).toString();}catch(e){return '';}};
+// Locate a user-installed CLI WITHOUT assuming a machine layout. ~/.local/bin is
+// the XDG-standard home (and where this box keeps `prd`); ~/bin is the older
+// razer layout. Falling back to the bare name lets PATH resolve at exec time.
+function userBin(name){
+  for(const d of [path.join(HOME,'.local/bin'), path.join(HOME,'bin')]){
+    const p=path.join(d,name); try{ if(fs.existsSync(p)) return p; }catch(e){}
+  }
+  return name;
+}
+const PRD_BIN = userBin('prd');
+// Where local git checkouts live. Overridable with PRD_CODE_ROOTS (colon-separated);
+// the defaults cover ~/dev (WSL box) and ~/Documents[/code] (razer).
+const CODE_ROOTS = [
+  ...String(process.env.PRD_CODE_ROOTS||'').split(':').filter(Boolean),
+  path.join(HOME,'dev'), path.join(HOME,'Documents'), path.join(HOME,'Documents/code'),
+].filter((d,i,a)=>a.indexOf(d)===i && fs.existsSync(d));
 const bash=c=>{try{return execFileSync('bash',['-lc',c],{maxBuffer:32*1024*1024,timeout:15000}).toString();}catch(e){return '';}};
 const norm=s=>String(s).toLowerCase().replace(/[-_ ]/g,'');
 const DAY=86400000;
@@ -31,14 +47,14 @@ function discover(force){
       .forEach(r=>{const n=r.full_name.split('/').pop();const e=ensure(n);e.gitea=true;e.giteaFull=r.full_name;e.giteaOpenIssues=r.open_issues_count||0;e.giteaUpdated=Date.parse(r.updated_at)||0;e.sources.add('gitea');}); }catch(e){} }
   }
   // PRD repo: tags
-  try{ const cnt={}; JSON.parse(sh(path.join(HOME,'bin/prd'),['summary','--json'])||'[]')
+  try{ const cnt={}; JSON.parse(sh(PRD_BIN,['summary','--json'])||'[]')
     .forEach(p=>(p.tags||'').split(',').forEach(t=>{t=t.trim();if(t.startsWith('repo:')){const n=t.slice(5);cnt[n]=(cnt[n]||0)+1;}}));
     Object.entries(cnt).forEach(([n,c])=>{const e=ensure(n);e.prdCount=c;e.sources.add('prd');}); }catch(e){}
 
   // LOCAL git-repo path index (broadened: ~/Documents AND ~/Documents/code, +1 nested level)
   const pathIndex={};
   const addRepo=(name,p)=>{ if(!pathIndex[norm(name)]) pathIndex[norm(name)]=p; };
-  for(const base of [path.join(HOME,'Documents'),path.join(HOME,'Documents/code')]){
+  for(const base of CODE_ROOTS){
     let names=[]; try{names=fs.readdirSync(base);}catch(e){continue;}
     for(const name of names){ const p=path.join(base,name); let st; try{st=fs.statSync(p);}catch(e){continue;} if(!st.isDirectory())continue;
       if(fs.existsSync(path.join(p,'.git'))) addRepo(name,p);
@@ -53,8 +69,8 @@ function discover(force){
 
   // SESSION cwd history (project folders) — mark recency, match to known repos
   try{ const pdir=path.join(HOME,'.claude/projects');
-    for(const d of fs.readdirSync(pdir)){ const m=/Documents-code-(.+)$|Documents-(.+)$/.exec(d); if(!m) continue;
-      const tail=(m[1]||m[2]); let st; try{st=fs.statSync(path.join(pdir,d));}catch(e){continue;}
+    for(const d of fs.readdirSync(pdir)){ const m=/Documents-code-(.+)$|Documents-(.+)$|^-home-[^-]+-(?:dev|code)-(.+)$/.exec(d); if(!m) continue;
+      const tail=(m[1]||m[2]||m[3]); let st; try{st=fs.statSync(path.join(pdir,d));}catch(e){continue;}
       let key=Object.keys(reg).find(k=>norm(k)===norm(tail)) || Object.keys(reg).find(k=>norm(k)===norm(tail.split('-')[0]));
       const e=ensure(key||tail); e.sources.add('session'); e.sessionMtime=Math.max(e.sessionMtime,st.mtimeMs);
     } }catch(e){}
@@ -78,4 +94,4 @@ function discover(force){
   CACHE=list; TS=Date.now();
   return list;
 }
-module.exports={discover, norm};
+module.exports={discover, norm, userBin, PRD_BIN, CODE_ROOTS};
