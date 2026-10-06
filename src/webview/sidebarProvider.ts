@@ -168,6 +168,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
       if (file) void vscode.window.showTextDocument(vscode.Uri.file(path.join(os.homedir(), 'handoff', file)));
       return true;
     }
+    if (m.type === 'HUB_COPY_HANDOFF') {
+      // Copy the pickup line a fresh Claude Code session needs -- the same wording
+      // the /handoff skill prints. The ABSOLUTE path is resolved here because the
+      // webview cannot know $HOME, and basename() keeps the copy inside ~/handoff/.
+      const file = path.basename(String((m as { file?: unknown }).file ?? ''));
+      if (!file) return true;
+      const abs = path.join(os.homedir(), 'handoff', file);
+      if (!fs.existsSync(abs)) {
+        void vscode.window.showWarningMessage(`Handoff not found: ${abs}`);
+        return true;
+      }
+      const cmd = `read the handoff at ${abs} and continue`;
+      vscode.env.clipboard.writeText(cmd).then(
+        () => vscode.window.setStatusBarMessage(`$(clippy) Copied handoff command: ${file}`, 4000),
+        (err: Error) => void vscode.window.showErrorMessage(`Could not copy handoff command: ${err.message}`)
+      );
+      return true;
+    }
     return false;
   }
 
@@ -412,11 +430,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
 </html>`;
   }
 
-  /** The repo the user is working in (workspace folder basename) — the hub opens
-   *  on this by default instead of a hardcoded repo. */
+  /** The repo the hub opens on. Default is '(all)' -- the cross-repo bucket, which
+   *  always exists. 'workspace' opens on the workspace folder's basename instead;
+   *  with no folder open it still falls back to '(all)', never a hardcoded repo. */
   private currentRepo(): string {
+    const mode = vscode.workspace.getConfiguration('prd').get<string>('hubDefaultView', 'all');
     const ws = vscode.workspace.workspaceFolders?.[0];
-    return ws ? path.basename(ws.uri.fsPath) : 'twicedata_intra';
+    return mode === 'workspace' && ws ? path.basename(ws.uri.fsPath) : '(all)';
   }
 }
 

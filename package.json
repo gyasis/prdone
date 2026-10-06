@@ -100,6 +100,13 @@
           "minimum": 0,
           "maximum": 1440,
           "description": "How often (in minutes) the visualizer auto-refreshes by re-running `prd summary --json`. Set to 0 to disable auto-refresh and rely on the manual refresh button only. Range 0-1440 (24h)."
+        },
+        "prd.hubDefaultView": {
+          "type": "string",
+          "enum": ["all", "workspace"],
+          "enumDescriptions": ["Open the Work Hub on (all) -- every repo's PRDs, handoffs and issues.", "Open the Work Hub on the current workspace folder's repo."],
+          "default": "all",
+          "description": "Which repo the Work Hub shows when it opens. Other repos stay one click away in the chip row."
         }
       }
     }
