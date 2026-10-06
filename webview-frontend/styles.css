@@ -1911,6 +1911,7 @@ body { font-family:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 .hub-link.none { color:var(--vscode-disabledForeground); }
 .hub-ext { position:absolute; top:8px; right:8px; background:none; border:1px solid var(--vscode-panel-border); border-radius:6px; color:var(--vscode-descriptionForeground); cursor:pointer; padding:1px 7px; font-size:11px; }
 .hub-ext:hover { color:var(--vscode-foreground); border-color:var(--vscode-focusBorder); }
+.hub-ext.hub-copy { right:40px; }
 .hub-work { font:11px ui-monospace, monospace; color:var(--vscode-descriptionForeground); padding:4px 4px 8px; }
 .hub-work b { color:var(--vscode-charts-orange); }
 .hub-conn-label { font:700 9px ui-monospace, monospace; letter-spacing:.1em; text-transform:uppercase; color:var(--vscode-disabledForeground); margin:10px 4px 5px; }

@@ -61,7 +61,10 @@ function esc(s: unknown): string { return String(s == null ? '' : s).replace(/[&
 
 // --- module state ---
 let allPrds: Prd[] = [];
-let repo = (window as unknown as { __PRD_HUB_REPO__?: string }).__PRD_HUB_REPO__ || 'twicedata_intra';
+// '(all)' is the cross-repo bucket and is always chip #1, so it is the only safe
+// default. A hardcoded project name assumes THIS machine has that repo -- when it
+// does not, assembleHub returns ok:false and every tab renders 0 (see renderTabs).
+let repo = (window as unknown as { __PRD_HUB_REPO__?: string }).__PRD_HUB_REPO__ || '(all)';
 let tab: Tab = 'PRDs';
 let hub: HubData | null = null;
 let repos: RepoEntry[] = [];
@@ -116,6 +119,10 @@ function resetSearch(): void {
 
 function counts(): Record<Tab, number | string> {
   if (!hub) return { Work: '·', PRDs: '·', Issues: '·', Handoffs: '·', Links: '·' };
+  // ok:false means the assemble FAILED (unknown repo, bad path). Rendering 0 there
+  // is a silent zero -- it looks identical to an empty-but-healthy repo and hides
+  // the reason. Show '!' so the failure is visible, and renderList() prints why.
+  if (hub.ok === false) return { Work: '!', PRDs: '!', Issues: '!', Handoffs: '!', Links: '!' };
   const cn = hub.connections || { uses: [], usedBy: [], references: [] };
   return {
     Work: hub.work?.dirty || 0,
@@ -266,6 +273,13 @@ function renderList(): void {
   const el = root?.querySelector('#hub-list') as HTMLElement | null;
   if (!el) return;
   const h = hub || ({} as HubData);
+  // Surface an assemble failure instead of falling through to an empty tab.
+  if (h.ok === false) {
+    el.innerHTML = `<div class="hub-empty">could not load <b>${esc(h.repo || repo)}</b><br>`
+      + `<span class="hub-sub">${esc((h as { error?: string }).error || 'unknown error')}</span><br>`
+      + `<span class="hub-sub">pick another repo above — “(all)” shows every PRD</span></div>`;
+    return;
+  }
   const prdById = new Map(allPrds.map((p) => [p.id, p] as const));
   const openPrd = (id: string): boolean => { const p = prdById.get(id); if (p) { openDetail(p, allPrds); return true; } return false; };
 
@@ -301,11 +315,19 @@ function renderList(): void {
       const badge = linked.length
         ? `<span class="hub-link">↑ ${esc((prdById.get(linked[0]) as Prd).title.slice(0, 28))}</span>`
         : `<span class="hub-link none">no PRD link</span>`;
-      return `<div class="hub-tile" data-i="${i}" tabindex="0"><div class="hub-tt">⇲ ${esc(x.file)}</div>${badge}<button class="hub-ext" data-file="${esc(x.file)}" title="Open handoff .md in IDE" type="button">📂</button></div>`;
+      return `<div class="hub-tile" data-i="${i}" tabindex="0"><div class="hub-tt">⇲ ${esc(x.file)}</div>${badge}<button class="hub-ext hub-copy" data-copy="${esc(x.file)}" title="Copy the pickup command to paste into Claude Code" type="button">⧉</button><button class="hub-ext" data-file="${esc(x.file)}" title="Open handoff .md in IDE" type="button">📂</button></div>`;
     }).join('');
     el.querySelectorAll<HTMLElement>('.hub-ext[data-file]').forEach((b) => b.addEventListener('click', (ev) => {
       ev.stopPropagation();
       const f = b.dataset.file; if (f) getVSCodeApi()?.postMessage({ type: 'HUB_OPEN_HANDOFF', file: f });
+    }));
+    // ⧉ copies "read the handoff at <abs path> and continue" -- the host resolves
+    // the absolute path and writes the clipboard; flash a tick so the click registers.
+    el.querySelectorAll<HTMLElement>('.hub-copy[data-copy]').forEach((b) => b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const f = b.dataset.copy; if (!f) return;
+      getVSCodeApi()?.postMessage({ type: 'HUB_COPY_HANDOFF', file: f });
+      b.textContent = '✓'; setTimeout(() => { b.textContent = '⧉'; }, 1200);
     }));
     el.querySelectorAll<HTMLElement>('.hub-tile').forEach((t) => t.addEventListener('click', () => {
       const x = hs[Number(t.dataset.i)];
